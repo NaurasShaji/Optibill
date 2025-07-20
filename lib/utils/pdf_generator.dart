@@ -10,7 +10,7 @@ class PdfGenerator {
   static Future<Uint8List> generateInvoicePdf(Invoice invoice) async {
     final pdf = pw.Document();
 
-    final formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: '₹'); // Indian Rupee
+    final formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: 'Rs. '); // Indian Rupee
     final formatDate = DateFormat('dd-MM-yyyy HH:mm');
 
     pdf.addPage(
@@ -22,7 +22,7 @@ class PdfGenerator {
             children: [
               pw.Center(
                 child: pw.Text(
-                  'Lens4Eyes Optical Shop',
+                  'Lens4Eyes',
                   style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold),
                 ),
               ),
@@ -90,10 +90,7 @@ class PdfGenerator {
                       style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16),
                     ),
                     pw.SizedBox(height: 10),
-                    pw.Text(
-                      'Total Profit: ${formatCurrency.format(invoice.totalProfit)}',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16, color: PdfColors.green700),
-                    ),
+
                   ],
                 ),
               ),

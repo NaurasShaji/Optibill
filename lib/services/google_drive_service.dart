@@ -26,14 +26,12 @@ class GoogleHttpClient extends http.BaseClient {
 
 class GoogleDriveService {
   final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: [drive.DriveApi.driveAppdataScope], // Recommended for app-specific hidden data
-    // Or use drive.DriveApi.driveFileScope for visible files
+    scopes: [drive.DriveApi.driveFileScope], // CHANGED: Using drive.file scope for visible files
   );
 
-  GoogleSignInAccount? _currentUser; // Keep this private
+  GoogleSignInAccount? _currentUser;
   drive.DriveApi? _driveApi;
 
-  // Public getter for currentUser
   GoogleSignInAccount? get currentUser => _currentUser;
 
   // Initialize and sign in
@@ -65,7 +63,6 @@ class GoogleDriveService {
   Future<void> backupData() async {
     if (!isSignedIn) {
       print('Not signed in to Google Drive.');
-      // Optionally, trigger sign-in here or show a message to the user
       bool success = await signIn();
       if (!success) return;
     }
@@ -85,10 +82,13 @@ class GoogleDriveService {
       final String jsonString = jsonEncode(backupData);
       final String fileName = 'optibill_backup_${DateTime.now().toIso8601String()}.json';
 
-      // 2. Upload to Google Drive
+      // 2. Upload to Google Drive (directly in My Drive)
       final drive.File fileMetadata = drive.File();
       fileMetadata.name = fileName;
-      fileMetadata.parents = ['appDataFolder']; // For driveAppdataScope
+      // Removed parents = ['appDataFolder'] as we are now using drive.file scope,
+      // which puts files in My Drive by default or a specified folder.
+      // If you want a specific folder in My Drive, you'd need to find/create its ID.
+      // For simplicity, it will go to the root of My Drive.
 
       final media = drive.Media(
         Stream.value(utf8.encode(jsonString)),
@@ -113,7 +113,8 @@ class GoogleDriveService {
     }
 
     try {
-      final fileList = await _driveApi!.files.list(spaces: 'appDataFolder'); // For driveAppdataScope
+      // List files from 'root' (My Drive) when using drive.file scope
+      final fileList = await _driveApi!.files.list(q: "name contains 'optibill_backup_' and mimeType='application/json'", spaces: 'drive');
       return fileList.files ?? [];
     } catch (e) {
       print('Error listing backup files: $e');

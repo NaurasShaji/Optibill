@@ -22,6 +22,7 @@ class LensAdapter extends TypeAdapter<Lens> {
       sellingPrice: fields[2] as double,
       costPrice: fields[3] as double,
       company: fields[4] as String,
+      stock: fields[6] as double,
       description: fields[5] as String?,
     );
   }
@@ -29,7 +30,7 @@ class LensAdapter extends TypeAdapter<Lens> {
   @override
   void write(BinaryWriter writer, Lens obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(7)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -41,7 +42,9 @@ class LensAdapter extends TypeAdapter<Lens> {
       ..writeByte(4)
       ..write(obj.company)
       ..writeByte(5)
-      ..write(obj.description);
+      ..write(obj.description)
+      ..writeByte(6)
+      ..write(obj.stock);
   }
 
   @override

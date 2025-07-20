@@ -21,6 +21,9 @@ class Lens extends HiveObject {
   String company; // Sub-category for lenses
 
   @HiveField(5)
+  double stock;
+
+  @HiveField(6)
   String? description; // Optional
 
   Lens({
@@ -29,6 +32,7 @@ class Lens extends HiveObject {
     required this.sellingPrice,
     required this.costPrice,
     required this.company,
+    this.stock = 0,
     this.description,
   }) : id = id ?? const Uuid().v4();
 
@@ -39,6 +43,7 @@ class Lens extends HiveObject {
     'sellingPrice': sellingPrice,
     'costPrice': costPrice,
     'company': company,
+    'stock': stock,
     'description': description,
   };
 
@@ -48,6 +53,7 @@ class Lens extends HiveObject {
     name: json['name'] as String,
     sellingPrice: json['sellingPrice'] as double,
     costPrice: json['costPrice'] as double,
+    stock: json['stock'] as double? ?? 0,
     company: json['company'] as String,
     description: json['description'] as String?,
   );

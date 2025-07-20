@@ -3,6 +3,9 @@
         android:label="optbill"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <meta-data
+            android:name="com.google.android.gms.client_id"
+            android:value="870555526466-hf0nibpig1fgjb9t00up4s411l2l1n00.apps.googleusercontent.com"/>
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -21,6 +21,9 @@ class Frame extends HiveObject {
   String brand; // Sub-category for frames
 
   @HiveField(5)
+  double stock;
+
+  @HiveField(6)
   String? description; // Optional
 
   Frame({
@@ -29,6 +32,7 @@ class Frame extends HiveObject {
     required this.sellingPrice,
     required this.costPrice,
     required this.brand,
+    this.stock = 0,
     this.description,
   }) : id = id ?? const Uuid().v4();
 
@@ -39,6 +43,7 @@ class Frame extends HiveObject {
     'sellingPrice': sellingPrice,
     'costPrice': costPrice,
     'brand': brand,
+    'stock': stock,
     'description': description,
   };
 
@@ -48,6 +53,7 @@ class Frame extends HiveObject {
     modelName: json['modelName'] as String,
     sellingPrice: json['sellingPrice'] as double,
     costPrice: json['costPrice'] as double,
+    stock: json['stock'] as double? ?? 0,
     brand: json['brand'] as String,
     description: json['description'] as String?,
   );

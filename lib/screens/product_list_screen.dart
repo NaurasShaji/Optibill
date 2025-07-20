@@ -241,6 +241,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                   DataColumn(label: Text('Brand/Company', style: TextStyle(fontWeight: FontWeight.bold))),
                                   DataColumn(label: Text('Selling Price', style: TextStyle(fontWeight: FontWeight.bold))),
                                   DataColumn(label: Text('Cost Price', style: TextStyle(fontWeight: FontWeight.bold))),
+                                  DataColumn(label: Text('Stock', style: TextStyle(fontWeight: FontWeight.bold))),
                                   DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.bold))),
                                 ],
                                 rows: _filteredProducts.map((product) {
@@ -248,6 +249,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                   String type = product is Frame ? 'Frame' : 'Lens';
                                   String brandCompany = product is Frame ? product.brand : product.company;
                                   String sellingPrice = formatCurrency.format(product.sellingPrice);
+                                  String stock = product is Frame ? product.stock.toString() : product.stock.toString();
                                   String costPrice = formatCurrency.format(product.costPrice);
 
                                   return DataRow(
@@ -257,6 +259,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                       DataCell(Text(brandCompany)),
                                       DataCell(Text(sellingPrice)),
                                       DataCell(Text(costPrice)),
+                                      DataCell(Text(stock)),
                                       DataCell(
                                         Row(
                                           mainAxisSize: MainAxisSize.min,

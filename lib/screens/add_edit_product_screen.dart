@@ -22,6 +22,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   TextEditingController _costPriceController = TextEditingController();
   TextEditingController _brandCompanyController = TextEditingController();
   TextEditingController _descriptionController = TextEditingController();
+  TextEditingController _stockController = TextEditingController();
 
   @override
   void initState() {
@@ -34,6 +35,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         _sellingPriceController.text = widget.product.sellingPrice.toString();
         _costPriceController.text = widget.product.costPrice.toString();
         _brandCompanyController.text = widget.product.brand;
+        _stockController.text = widget.product.stock.toString();
         _descriptionController.text = widget.product.description ?? '';
       } else if (widget.product is Lens) {
         _productType = 'Lens';
@@ -41,6 +43,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         _sellingPriceController.text = widget.product.sellingPrice.toString();
         _costPriceController.text = widget.product.costPrice.toString();
         _brandCompanyController.text = widget.product.company;
+        _stockController.text = widget.product.stock.toString();
         _descriptionController.text = widget.product.description ?? '';
       }
     }
@@ -52,6 +55,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     _sellingPriceController.dispose();
     _costPriceController.dispose();
     _brandCompanyController.dispose();
+    _stockController.dispose();
     _descriptionController.dispose();
     super.dispose();
   }
@@ -68,6 +72,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
             sellingPrice: double.parse(_sellingPriceController.text),
             costPrice: double.parse(_costPriceController.text),
             brand: _brandCompanyController.text,
+            stock: double.parse(_stockController.text),
             description: _descriptionController.text.isEmpty ? null : _descriptionController.text,
           );
           if (widget.product is Frame) {
@@ -88,6 +93,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
             sellingPrice: double.parse(_sellingPriceController.text),
             costPrice: double.parse(_costPriceController.text),
             company: _brandCompanyController.text,
+            stock: double.parse(_stockController.text),
             description: _descriptionController.text.isEmpty ? null : _descriptionController.text,
           );
           if (widget.product is Lens) {
@@ -218,6 +224,24 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
                 ),
                 maxLines: 3,
+              ),
+              const SizedBox(height: 16),
+              TextFormField( // New Stock Count field
+                controller: _stockController,
+                decoration: InputDecoration(
+                  labelText: 'Stock Count',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                ),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter stock count';
+                  }
+                  if (int.tryParse(value) == null || int.parse(value) < 0) {
+                    return 'Please enter a valid non-negative integer';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 24),
               ElevatedButton.icon(

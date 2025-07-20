@@ -22,6 +22,7 @@ class FrameAdapter extends TypeAdapter<Frame> {
       sellingPrice: fields[2] as double,
       costPrice: fields[3] as double,
       brand: fields[4] as String,
+      stock: fields[6] as double,
       description: fields[5] as String?,
     );
   }
@@ -29,7 +30,7 @@ class FrameAdapter extends TypeAdapter<Frame> {
   @override
   void write(BinaryWriter writer, Frame obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(7)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -41,7 +42,9 @@ class FrameAdapter extends TypeAdapter<Frame> {
       ..writeByte(4)
       ..write(obj.brand)
       ..writeByte(5)
-      ..write(obj.description);
+      ..write(obj.description)
+      ..writeByte(6)
+      ..write(obj.stock);
   }
 
   @override
