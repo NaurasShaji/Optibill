@@ -173,6 +173,17 @@ class _BillingScreenState extends State<BillingScreen> {
       return;
     }
 
+    // Check stock availability before proceeding
+    for (var item in _currentItems) {
+      final product = _productService.getProductById(item.productId, item.productType);
+      if (product == null || product.stock < item.quantity) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Insufficient stock for ${item.productName}. Available: ${product?.stock ?? 0}')),
+        );
+        return;
+      }
+    }
+
     // Defensive: treat empty discount as 0.0
     double billDiscount = double.tryParse(_billDiscountController.text) ?? 0.0;
     if (billDiscount < 0) billDiscount = 0.0;
@@ -190,11 +201,37 @@ class _BillingScreenState extends State<BillingScreen> {
 
     try {
       if (_editingInvoiceId != null) {
+        // Restore stock for old invoice items
+        for (var oldItem in widget.invoiceToEdit!.items) {
+          await _productService.increaseStock(oldItem.productId, oldItem.productType, oldItem.quantity);
+        }
+        // Check again for new stock after restoration
+        for (var item in _currentItems) {
+          final product = _productService.getProductById(item.productId, item.productType);
+          if (product == null || product.stock < item.quantity) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Insufficient stock for ${item.productName}. Available: ${product?.stock ?? 0}')),
+            );
+            // Re-decrease stock for old items to keep state consistent
+            for (var oldItem in widget.invoiceToEdit!.items) {
+              await _productService.decreaseStock(oldItem.productId, oldItem.productType, oldItem.quantity);
+            }
+            return;
+          }
+        }
+        // Decrease stock for new invoice items
+        for (var item in _currentItems) {
+          await _productService.decreaseStock(item.productId, item.productType, item.quantity);
+        }
         await _invoiceService.updateInvoice(invoice);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Invoice updated successfully!')),
         );
       } else {
+        // Decrease stock for new invoice items
+        for (var item in _currentItems) {
+          await _productService.decreaseStock(item.productId, item.productType, item.quantity);
+        }
         await _invoiceService.addInvoice(invoice);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Invoice saved successfully!')),
@@ -282,6 +319,10 @@ class _BillingScreenState extends State<BillingScreen> {
             TextButton(
               child: const Text('Delete', style: TextStyle(color: Colors.red)),
               onPressed: () async {
+                // Restore stock for all items in the invoice
+                for (var item in invoice.items) {
+                  await _productService.increaseStock(item.productId, item.productType, item.quantity);
+                }
                 await _invoiceService.deleteInvoice(invoice.invoiceId);
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -971,15 +1012,19 @@ class _ProductPickerState extends State<ProductPicker> {
                               children: [
                                 SizedBox(height: 4),
                                 Text(
-                                  'Type: ${product is Frame ? 'Frame' : 'Lens'}',
+                                  'Type:  ${product is Frame ? 'Frame' : 'Lens'}',
                                   style: TextStyle(color: Colors.grey[700]),
                                 ),
                                 Text(
-                                  'Brand/Company: ${product is Frame ? product.brand : product.company}',
+                                  'Brand/Company:  ${product is Frame ? product.brand : product.company}',
                                   style: TextStyle(color: Colors.grey[700]),
                                 ),
                                 Text(
-                                  'Selling Price: ${formatCurrency.format(product.sellingPrice)}',
+                                  'Stock:  ${product.stock}',
+                                  style: TextStyle(color: Colors.orange[700], fontWeight: FontWeight.bold),
+                                ),
+                                Text(
+                                  'Selling Price:  ${formatCurrency.format(product.sellingPrice)}',
                                   style: TextStyle(color: Colors.green[700], fontWeight: FontWeight.bold),
                                 ),
                               ],

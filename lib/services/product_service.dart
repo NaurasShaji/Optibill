@@ -64,4 +64,37 @@ class ProductService {
     }
     return null;
   }
+
+  // --- Stock Management ---
+  Future<void> decreaseStock(String productId, String productType, int quantity) async {
+    if (productType == 'Frame') {
+      final frame = getFrameById(productId);
+      if (frame != null) {
+        frame.stock = (frame.stock - quantity).clamp(0, double.infinity);
+        await updateFrame(frame);
+      }
+    } else if (productType == 'Lens') {
+      final lens = getLensById(productId);
+      if (lens != null) {
+        lens.stock = (lens.stock - quantity).clamp(0, double.infinity);
+        await updateLens(lens);
+      }
+    }
+  }
+
+  Future<void> increaseStock(String productId, String productType, int quantity) async {
+    if (productType == 'Frame') {
+      final frame = getFrameById(productId);
+      if (frame != null) {
+        frame.stock += quantity;
+        await updateFrame(frame);
+      }
+    } else if (productType == 'Lens') {
+      final lens = getLensById(productId);
+      if (lens != null) {
+        lens.stock += quantity;
+        await updateLens(lens);
+      }
+    }
+  }
 }
