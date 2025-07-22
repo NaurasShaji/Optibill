@@ -208,15 +208,27 @@ class _BillingScreenState extends State<BillingScreen> {
       invoiceId: _editingInvoiceId,
       saleDate: widget.invoiceToEdit?.saleDate ?? DateTime.now(),
       items: List.from(_currentItems), // Defensive copy
-      customerName: _customerNameController.text.isEmpty ? null : _customerNameController.text,
-      customerContact: _customerContactController.text.isEmpty ? null : _customerContactController.text,
+      customerName: _customerNameController.text.trim().isEmpty
+          ? null
+          : _customerNameController.text.trim(),
+      customerContact: _customerContactController.text.trim().isEmpty
+          ? null
+          : _customerContactController.text.trim(),
       paymentMethod: _selectedPaymentMethod,
       totalDiscountOnBill: billDiscount > 0 ? billDiscount : null,
       // Add new fields
-      rightEyeDV: _rightEyeDVController.text.isEmpty ? null : _rightEyeDVController.text,
-      rightEyeNV: _rightEyeNVController.text.isEmpty ? null : _rightEyeNVController.text,
-      leftEyeDV: _leftEyeDVController.text.isEmpty ? null : _leftEyeDVController.text,
-      leftEyeNV: _leftEyeNVController.text.isEmpty ? null : _leftEyeNVController.text,
+      rightEyeDV: _rightEyeDVController.text.trim().isEmpty
+          ? null
+          : _rightEyeDVController.text.trim(),
+      rightEyeNV: _rightEyeNVController.text.trim().isEmpty
+          ? null
+          : _rightEyeNVController.text.trim(),
+      leftEyeDV: _leftEyeDVController.text.trim().isEmpty
+          ? null
+          : _leftEyeDVController.text.trim(),
+      leftEyeNV: _leftEyeNVController.text.trim().isEmpty
+          ? null
+          : _leftEyeNVController.text.trim(),
     );
 
     try {

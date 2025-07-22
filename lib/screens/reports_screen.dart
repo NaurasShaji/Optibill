@@ -300,7 +300,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                         children: [
                           Text(
                             'Monthly Report for ${formatMonthYear.format(DateTime(_selectedYearForMonth, _selectedMonth))}',
-                            style: Theme.of(context).textTheme.headlineSmall,
+                            style: Theme.of(context).textTheme.titleLarge,
                           ),
                           IconButton(
                             icon: const Icon(Icons.calendar_month),

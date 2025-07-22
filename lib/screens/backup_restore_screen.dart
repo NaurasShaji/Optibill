@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:optibill/models/invoice.dart';
 import 'package:optibill/services/google_drive_service.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
+import 'package:hive/hive.dart';
+import 'package:intl/intl.dart';
 
 class BackupRestoreScreen extends StatefulWidget {
   const BackupRestoreScreen({super.key});
@@ -15,11 +18,75 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
   bool _isBackingUp = false;
   bool _isRestoring = false;
   List<drive.File> _backupFiles = [];
+  final _customerNameController = TextEditingController();
+  List<Invoice> _foundInvoices = [];
+  Invoice? _selectedInvoice;
+  bool _isSearching = false;
 
   @override
   void initState() {
     super.initState();
     _checkSignInStatus();
+    _customerNameController.addListener(() {
+      _searchCustomers(_customerNameController.text);
+    });
+  }
+
+  @override
+  void dispose() {
+    _customerNameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _searchCustomers(String query) async {
+    if (query.trim().isEmpty) {
+      setState(() {
+        _foundInvoices = [];
+        _selectedInvoice = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _selectedInvoice = null;
+    });
+
+    try {
+      final invoiceBox = Hive.box<Invoice>('invoices');
+      final queryLower = query.trim().toLowerCase();
+
+      final matchingInvoices = invoiceBox.values
+          .where((invoice) =>
+              invoice.customerName?.trim().toLowerCase().startsWith(queryLower) ??
+              false)
+          .toList();
+
+      final Map<String, Invoice> latestInvoicesByCustomer = {};
+      for (final invoice in matchingInvoices) {
+        final customerName = invoice.customerName!.trim().toLowerCase();
+        if (!latestInvoicesByCustomer.containsKey(customerName) ||
+            invoice.saleDate
+                .isAfter(latestInvoicesByCustomer[customerName]!.saleDate)) {
+          latestInvoicesByCustomer[customerName] = invoice;
+        }
+      }
+
+      final results = latestInvoicesByCustomer.values.toList();
+      results.sort((a, b) => (a.customerName ?? '').compareTo(b.customerName ?? ''));
+
+      setState(() {
+        _foundInvoices = results;
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error searching for customers: $e')),
+      );
+    } finally {
+      setState(() {
+        _isSearching = false;
+      });
+    }
   }
 
   Future<void> _checkSignInStatus() async {
@@ -157,12 +224,86 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: ListView(
+        // Changed to ListView to prevent overflow
         children: [
           Card(
             elevation: 2,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12.0)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  Text(
+                    'Customer Details Lookup',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _customerNameController,
+                    decoration: InputDecoration(
+                      labelText: 'Customer Name',
+
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12.0),
+                      ),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _customerNameController.clear();
+                          setState(() {
+                            _foundInvoices = [];
+                            _selectedInvoice = null;
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_isSearching)
+                    const Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  if (_foundInvoices.isNotEmpty)
+                    SizedBox(
+                      height:
+                          150, // Constrain height to avoid layout jumps
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _foundInvoices.length,
+                        itemBuilder: (context, index) {
+                          final invoice = _foundInvoices[index];
+                          return Card(
+                            child: ListTile(
+                              title: Text(invoice.customerName ?? 'No Name'),
+                              subtitle: Text(
+                                  'Last Visit: ${DateFormat('dd-MM-yyyy').format(invoice.saleDate)}'),
+                              onTap: () {
+                                setState(() {
+                                  _selectedInvoice = invoice;
+                                });
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  if (_selectedInvoice != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16.0),
+                      child: _buildInvoiceDetails(_selectedInvoice!),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12.0)),
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
@@ -275,6 +416,102 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildInvoiceDetails(Invoice invoice) {
+    final formatCurrency =
+        NumberFormat.currency(locale: 'en_IN', symbol: '₹');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Latest Details for ${invoice.customerName}:',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 8),
+        _buildDetailRow(
+            'Date:', invoice.saleDate.toLocal().toString().split(' ')[0]),
+        _buildDetailRow('Contact:', invoice.customerContact ?? 'N/A'),
+        const Divider(height: 20),
+        Text('Prescription Details:',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildVisionDetail('Right Eye DV', invoice.rightEyeDV),
+            _buildVisionDetail('Right Eye NV', invoice.rightEyeNV),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildVisionDetail('Left Eye DV', invoice.leftEyeDV),
+            _buildVisionDetail('Left Eye NV', invoice.leftEyeNV),
+          ],
+        ),
+        const Divider(height: 20),
+        Text('Purchased Items:',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ...invoice.items.map((item) => Card(
+              margin: const EdgeInsets.symmetric(vertical: 4),
+              child: ListTile(
+                title: Text('${item.productName} (${item.productType})'),
+                subtitle: Text(
+                    'Qty: ${item.quantity} @ ${formatCurrency.format(item.unitSellingPrice)}'),
+                trailing: Text(formatCurrency.format(item.totalSellingPrice)),
+              ),
+            )),
+        const Divider(height: 20),
+        Text('Bill Summary:', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        _buildDetailRow('Subtotal:', formatCurrency.format(invoice.subtotal)),
+        _buildDetailRow('Discount:',
+            formatCurrency.format(invoice.totalDiscountOnBill ?? 0)),
+        _buildDetailRow('Payment Method:', invoice.paymentMethod),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Total Amount:',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            Text(formatCurrency.format(invoice.totalAmount),
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold, color: Colors.blue)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailRow(String title, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(value),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVisionDetail(String title, String? value) {
+    return Column(
+      children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        Text(value ?? 'N/A'),
+      ],
     );
   }
 }
