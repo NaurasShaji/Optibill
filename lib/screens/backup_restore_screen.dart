@@ -1,92 +1,58 @@
 import 'package:flutter/material.dart';
-import 'package:optibill/models/invoice.dart';
 import 'package:optibill/services/google_drive_service.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:hive/hive.dart';
 import 'package:intl/intl.dart';
+import 'package:optibill/models/invoice.dart';
 
-class BackupRestoreScreen extends StatefulWidget {
+class BackupRestoreScreen extends StatelessWidget {
   const BackupRestoreScreen({super.key});
 
   @override
-  State<BackupRestoreScreen> createState() => _BackupRestoreScreenState();
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          toolbarHeight: 0,
+          title: const Text('Utilities'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Customer Lookup', icon: Icon(Icons.search)),
+              Tab(text: 'Backup & Restore', icon: Icon(Icons.backup)),
+            ],
+          ),
+        ),
+        body: const TabBarView(
+          children: [
+            CustomerLookupTab(),
+            BackupRestoreTab(),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
+// --- BackupRestoreTab ---
+class BackupRestoreTab extends StatefulWidget {
+  const BackupRestoreTab({super.key});
+
+  @override
+  State<BackupRestoreTab> createState() => _BackupRestoreTabState();
+}
+
+class _BackupRestoreTabState extends State<BackupRestoreTab> {
   final GoogleDriveService _googleDriveService = GoogleDriveService();
   bool _isSigningIn = false;
   bool _isBackingUp = false;
   bool _isRestoring = false;
   List<drive.File> _backupFiles = [];
-  final _customerNameController = TextEditingController();
-  List<Invoice> _foundInvoices = [];
-  Invoice? _selectedInvoice;
-  bool _isSearching = false;
 
   @override
   void initState() {
     super.initState();
     _checkSignInStatus();
-    _customerNameController.addListener(() {
-      _searchCustomers(_customerNameController.text);
-    });
-  }
-
-  @override
-  void dispose() {
-    _customerNameController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _searchCustomers(String query) async {
-    if (query.trim().isEmpty) {
-      setState(() {
-        _foundInvoices = [];
-        _selectedInvoice = null;
-      });
-      return;
-    }
-
-    setState(() {
-      _isSearching = true;
-      _selectedInvoice = null;
-    });
-
-    try {
-      final invoiceBox = Hive.box<Invoice>('invoices');
-      final queryLower = query.trim().toLowerCase();
-
-      final matchingInvoices = invoiceBox.values
-          .where((invoice) =>
-              invoice.customerName?.trim().toLowerCase().startsWith(queryLower) ??
-              false)
-          .toList();
-
-      final Map<String, Invoice> latestInvoicesByCustomer = {};
-      for (final invoice in matchingInvoices) {
-        final customerName = invoice.customerName!.trim().toLowerCase();
-        if (!latestInvoicesByCustomer.containsKey(customerName) ||
-            invoice.saleDate
-                .isAfter(latestInvoicesByCustomer[customerName]!.saleDate)) {
-          latestInvoicesByCustomer[customerName] = invoice;
-        }
-      }
-
-      final results = latestInvoicesByCustomer.values.toList();
-      results.sort((a, b) => (a.customerName ?? '').compareTo(b.customerName ?? ''));
-
-      setState(() {
-        _foundInvoices = results;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error searching for customers: $e')),
-      );
-    } finally {
-      setState(() {
-        _isSearching = false;
-      });
-    }
   }
 
   Future<void> _checkSignInStatus() async {
@@ -105,7 +71,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Signed in to Google Drive!')),
         );
-        _listBackupFiles(); // List files immediately after sign-in
+        _listBackupFiles();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Google Sign-In cancelled or failed.')),
@@ -141,7 +107,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Data backed up successfully!')),
       );
-      _listBackupFiles(); // Refresh list after backup
+      _listBackupFiles();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Backup failed: $e')),
@@ -194,12 +160,13 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
             TextButton(
               child: const Text('Restore', style: TextStyle(color: Colors.red)),
               onPressed: () async {
-                Navigator.of(context).pop(); // Close dialog
+                Navigator.of(context).pop();
                 setState(() {
                   _isRestoring = true;
                 });
                 try {
                   await _googleDriveService.restoreData(file.id!);
+                  await _listBackupFiles();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Data restored successfully!')),
                   );
@@ -225,12 +192,211 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: ListView(
-        // Changed to ListView to prevent overflow
         children: [
           Card(
             elevation: 2,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12.0)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  Text(
+                    _googleDriveService.isSignedIn ? 'Google Drive Connected' : 'Connect to Google Drive',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 16),
+                  if (!_googleDriveService.isSignedIn)
+                    ElevatedButton.icon(
+                      onPressed: _isSigningIn ? null : _handleSignIn,
+                      icon: _isSigningIn ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.login),
+                      label: Text(_isSigningIn ? 'Signing In...' : 'Sign In with Google'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        textStyle: const TextStyle(fontSize: 18),
+                      ),
+                    )
+                  else
+                    Column(
+                      children: [
+                        Text('Signed in as: ${_googleDriveService.currentUser?.displayName ?? 'N/A'}'),
+                        const SizedBox(height: 10),
+                        ElevatedButton.icon(
+                          onPressed: _handleSignOut,
+                          icon: const Icon(Icons.logout),
+                          label: const Text('Sign Out'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                            textStyle: const TextStyle(fontSize: 18),
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _googleDriveService.isSignedIn && !_isBackingUp ? _handleBackup : null,
+            icon: _isBackingUp ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.cloud_upload),
+            label: Text(_isBackingUp ? 'Backing Up...' : 'Backup Data to Google Drive'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 15),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+              textStyle: const TextStyle(fontSize: 18),
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _googleDriveService.isSignedIn && !_isRestoring ? _listBackupFiles : null,
+            icon: _isRestoring ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.cloud_download),
+            label: Text(_isRestoring ? 'Restoring...' : 'Restore Data from Google Drive'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 15),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+              textStyle: const TextStyle(fontSize: 18),
+            ),
+          ),
+          const SizedBox(height: 24),
+          if (_backupFiles.isNotEmpty && _googleDriveService.isSignedIn)
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Available Backups:', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 10),
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _backupFiles.length,
+                      itemBuilder: (context, index) {
+                        final file = _backupFiles[index];
+                        return ListTile(
+                          title: Text(file.name ?? 'Unknown File'),
+                          subtitle: Text('ID: ${file.id ?? 'N/A'}'),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.restore, color: Colors.blue),
+                            onPressed: () => _handleRestore(file),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- CustomerLookupTab ---
+class CustomerLookupTab extends StatefulWidget {
+  const CustomerLookupTab({super.key});
+
+  @override
+  State<CustomerLookupTab> createState() => _CustomerLookupTabState();
+}
+
+class _CustomerLookupTabState extends State<CustomerLookupTab> {
+  final _customerNameController = TextEditingController();
+  List<Invoice> _foundInvoices = [];
+  Invoice? _selectedInvoice;
+  bool _isSearching = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _customerNameController.addListener(() {
+      _searchCustomers(_customerNameController.text);
+    });
+  }
+
+  @override
+  void dispose() {
+    _customerNameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _searchCustomers(String query) async {
+    if (query.trim().isEmpty) {
+      setState(() {
+        _foundInvoices = [];
+        _selectedInvoice = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _selectedInvoice = null;
+    });
+
+    try {
+      final invoiceBox = Hive.box<Invoice>('invoices');
+      final queryLower = query.trim().toLowerCase();
+
+      final matchingInvoices = invoiceBox.values
+          .where((invoice) =>
+              invoice.customerName?.trim().toLowerCase().startsWith(queryLower) ?? false)
+          .toList();
+
+      final Map<String, Invoice> latestInvoicesByCustomer = {};
+      for (final invoice in matchingInvoices) {
+        final customerName = invoice.customerName?.trim().toLowerCase() ?? '';
+        final customerContact = invoice.customerContact?.trim() ?? '';
+        final key = '$customerName|$customerContact';
+        if (!latestInvoicesByCustomer.containsKey(key) ||
+            invoice.saleDate.isAfter(latestInvoicesByCustomer[key]!.saleDate)) {
+          latestInvoicesByCustomer[key] = invoice;
+        }
+      }
+
+      final results = latestInvoicesByCustomer.values.toList()
+        ..sort((a, b) {
+          final aKey = (a.customerName ?? '') + (a.customerContact ?? '');
+          final bKey = (b.customerName ?? '') + (b.customerContact ?? '');
+          return aKey.compareTo(bKey);
+        });
+
+      setState(() {
+        _foundInvoices = results;
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error searching for customers: $e')),
+      );
+    } finally {
+      setState(() {
+        _isSearching = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: ListView(
+        children: [
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
@@ -244,10 +410,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
                     controller: _customerNameController,
                     decoration: InputDecoration(
                       labelText: 'Customer Name',
-
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12.0),
-                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.0)),
                       suffixIcon: IconButton(
                         icon: const Icon(Icons.clear),
                         onPressed: () {
@@ -262,16 +425,11 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
                   ),
                   const SizedBox(height: 12),
                   if (_isSearching)
-                    const Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: Center(child: CircularProgressIndicator()),
-                    ),
+                    const Center(child: CircularProgressIndicator()),
                   if (_foundInvoices.isNotEmpty)
                     SizedBox(
-                      height:
-                          150, // Constrain height to avoid layout jumps
+                      height: 150,
                       child: ListView.builder(
-                        shrinkWrap: true,
                         itemCount: _foundInvoices.length,
                         itemBuilder: (context, index) {
                           final invoice = _foundInvoices[index];
@@ -279,7 +437,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
                             child: ListTile(
                               title: Text(invoice.customerName ?? 'No Name'),
                               subtitle: Text(
-                                  'Last Visit: ${DateFormat('dd-MM-yyyy').format(invoice.saleDate)}'),
+                                'Last Visit:  ${DateFormat('dd-MM-yyyy').format(invoice.saleDate)}',
+                              ),
                               onTap: () {
                                 setState(() {
                                   _selectedInvoice = invoice;
@@ -299,143 +458,23 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 24),
-          Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12.0)),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  Text(
-                    _googleDriveService.isSignedIn ? 'Google Drive Connected' : 'Connect to Google Drive',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  SizedBox(height: 16),
-                  if (!_googleDriveService.isSignedIn)
-                    ElevatedButton.icon(
-                      onPressed: _isSigningIn ? null : _handleSignIn,
-                      icon: _isSigningIn ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.login),
-                      label: Text(_isSigningIn ? 'Signing In...' : 'Sign In with Google'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        textStyle: const TextStyle(fontSize: 18),
-                      ),
-                    )
-                  else
-                    Column(
-                      children: [
-                        // Corrected access to currentUser
-                        Text('Signed in as: ${_googleDriveService.currentUser?.displayName ?? 'N/A'}'),
-                        SizedBox(height: 10),
-                        ElevatedButton.icon(
-                          onPressed: _handleSignOut,
-                          icon: const Icon(Icons.logout),
-                          label: const Text('Sign Out'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 15),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-                            backgroundColor: Colors.red,
-                            foregroundColor: Colors.white,
-                            textStyle: const TextStyle(fontSize: 18),
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
-          ),
-          SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _googleDriveService.isSignedIn && !_isBackingUp
-                ? _handleBackup
-                : null,
-            icon: _isBackingUp ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.cloud_upload),
-            label: Text(_isBackingUp ? 'Backing Up...' : 'Backup Data to Google Drive'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-              textStyle: const TextStyle(fontSize: 18),
-            ),
-          ),
-          SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: _googleDriveService.isSignedIn && !_isRestoring
-                ? _listBackupFiles // First list, then user selects to restore
-                : null,
-            icon: _isRestoring ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.cloud_download),
-            label: Text(_isRestoring ? 'Restoring...' : 'Restore Data from Google Drive'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-              textStyle: const TextStyle(fontSize: 18),
-            ),
-          ),
-          SizedBox(height: 24),
-          if (_backupFiles.isNotEmpty && _googleDriveService.isSignedIn)
-            Expanded(
-              child: Card(
-                elevation: 2,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Available Backups:', style: Theme.of(context).textTheme.titleLarge),
-                      SizedBox(height: 10),
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount: _backupFiles.length,
-                          itemBuilder: (context, index) {
-                            final file = _backupFiles[index];
-                            return ListTile(
-                              title: Text(file.name ?? 'Unknown File'),
-                              subtitle: Text('ID: ${file.id ?? 'N/A'}'),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.restore, color: Colors.blue),
-                                onPressed: () => _handleRestore(file),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
     );
   }
 
   Widget _buildInvoiceDetails(Invoice invoice) {
-    final formatCurrency =
-        NumberFormat.currency(locale: 'en_IN', symbol: '₹');
+    final formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Latest Details for ${invoice.customerName}:',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
+        Text('Latest Details for ${invoice.customerName}:',
+            style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),
-        _buildDetailRow(
-            'Date:', invoice.saleDate.toLocal().toString().split(' ')[0]),
+        _buildDetailRow('Date:', invoice.saleDate.toLocal().toString().split(' ')[0]),
         _buildDetailRow('Contact:', invoice.customerContact ?? 'N/A'),
         const Divider(height: 20),
-        Text('Prescription Details:',
-            style: Theme.of(context).textTheme.titleMedium),
+        Text('Prescription Details:', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -453,8 +492,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
           ],
         ),
         const Divider(height: 20),
-        Text('Purchased Items:',
-            style: Theme.of(context).textTheme.titleMedium),
+        Text('Purchased Items:', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         ...invoice.items.map((item) => Card(
               margin: const EdgeInsets.symmetric(vertical: 4),
@@ -469,8 +507,7 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
         Text('Bill Summary:', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         _buildDetailRow('Subtotal:', formatCurrency.format(invoice.subtotal)),
-        _buildDetailRow('Discount:',
-            formatCurrency.format(invoice.totalDiscountOnBill ?? 0)),
+        _buildDetailRow('Discount:', formatCurrency.format(invoice.totalDiscountOnBill ?? 0)),
         _buildDetailRow('Payment Method:', invoice.paymentMethod),
         const SizedBox(height: 8),
         Row(
@@ -482,10 +519,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
                     .titleMedium
                     ?.copyWith(fontWeight: FontWeight.bold)),
             Text(formatCurrency.format(invoice.totalAmount),
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold, color: Colors.blue)),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold, color: Colors.blue)),
           ],
         ),
       ],

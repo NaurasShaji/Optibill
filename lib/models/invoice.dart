@@ -39,6 +39,9 @@ class Invoice extends HiveObject {
   @HiveField(10)
   String? leftEyeNV;  // Left Eye Near Vision
 
+  @HiveField(11)
+  String? note;
+
   Invoice({
     String? invoiceId,
     required this.saleDate,
@@ -51,6 +54,7 @@ class Invoice extends HiveObject {
     this.rightEyeNV,
     this.leftEyeDV,
     this.leftEyeNV,
+    this.note,
   }) : invoiceId = invoiceId ?? const Uuid().v4();
 
   // Computed Property: subtotal (sum of unitSellingPrice * quantity for all items before bill-level discount)
@@ -78,6 +82,7 @@ class Invoice extends HiveObject {
     'rightEyeNV': rightEyeNV,
     'leftEyeDV': leftEyeDV,
     'leftEyeNV': leftEyeNV,
+    'note': note,
   };
 
   // Create an Invoice object from a JSON map
@@ -95,5 +100,6 @@ class Invoice extends HiveObject {
     rightEyeNV: json['rightEyeNV'] as String?,
     leftEyeDV: json['leftEyeDV'] as String?,
     leftEyeNV: json['leftEyeNV'] as String?,
+    note: json['note'] as String?,
   );
 }

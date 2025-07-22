@@ -29,6 +29,7 @@ class _BillingScreenState extends State<BillingScreen> {
   final TextEditingController _rightEyeNVController = TextEditingController();
   final TextEditingController _leftEyeDVController = TextEditingController();
   final TextEditingController _leftEyeNVController = TextEditingController();
+  final TextEditingController _noteController = TextEditingController();
 
   List<InvoiceItem> _currentItems = [];
   String _selectedPaymentMethod = 'Cash';
@@ -61,6 +62,7 @@ class _BillingScreenState extends State<BillingScreen> {
       _rightEyeNVController.text = widget.invoiceToEdit!.rightEyeNV ?? '';
       _leftEyeDVController.text = widget.invoiceToEdit!.leftEyeDV ?? '';
       _leftEyeNVController.text = widget.invoiceToEdit!.leftEyeNV ?? '';
+      _noteController.text = widget.invoiceToEdit!.note ?? '';
     }
     _calculateTotals();
   }
@@ -75,6 +77,7 @@ class _BillingScreenState extends State<BillingScreen> {
     _rightEyeNVController.dispose();
     _leftEyeDVController.dispose();
     _leftEyeNVController.dispose();
+    _noteController.dispose();
     super.dispose();
   }
 
@@ -229,6 +232,9 @@ class _BillingScreenState extends State<BillingScreen> {
       leftEyeNV: _leftEyeNVController.text.trim().isEmpty
           ? null
           : _leftEyeNVController.text.trim(),
+      note: _noteController.text.trim().isEmpty
+          ? null
+          : _noteController.text.trim(),
     );
 
     try {
@@ -408,6 +414,7 @@ class _BillingScreenState extends State<BillingScreen> {
                     rightEyeNVController: _rightEyeNVController,
                     leftEyeDVController: _leftEyeDVController,
                     leftEyeNVController: _leftEyeNVController,
+                    noteController: _noteController,
                   ),
                   _ItemsSectionCard(
                     currentItems: _currentItems,
@@ -468,6 +475,7 @@ class _CustomerDetailsCard extends StatelessWidget {
   final TextEditingController rightEyeNVController;
   final TextEditingController leftEyeDVController;
   final TextEditingController leftEyeNVController;
+  final TextEditingController noteController;
 
   const _CustomerDetailsCard({
     required this.customerNameController,
@@ -479,6 +487,7 @@ class _CustomerDetailsCard extends StatelessWidget {
     required this.rightEyeNVController,
     required this.leftEyeDVController,
     required this.leftEyeNVController,
+    required this.noteController,
   });
 
   @override
@@ -564,6 +573,16 @@ class _CustomerDetailsCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: noteController,
+              decoration: InputDecoration(
+                labelText: 'note(Optional)',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+              ),
+              maxLines: 2,
             ),
             SizedBox(height: 10),
             DropdownButtonFormField<String>(

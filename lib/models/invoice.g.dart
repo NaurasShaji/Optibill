@@ -28,13 +28,14 @@ class InvoiceAdapter extends TypeAdapter<Invoice> {
       rightEyeNV: fields[8] as String?,
       leftEyeDV: fields[9] as String?,
       leftEyeNV: fields[10] as String?,
+      note: fields[11] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Invoice obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.invoiceId)
       ..writeByte(1)
@@ -56,7 +57,9 @@ class InvoiceAdapter extends TypeAdapter<Invoice> {
       ..writeByte(9)
       ..write(obj.leftEyeDV)
       ..writeByte(10)
-      ..write(obj.leftEyeNV);
+      ..write(obj.leftEyeNV)
+      ..writeByte(11)
+      ..write(obj.note);
   }
 
   @override
