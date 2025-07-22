@@ -220,10 +220,10 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
               TextFormField(
                 controller: _descriptionController,
                 decoration: InputDecoration(
-                  labelText: 'Description (Optional)',
+                  labelText: 'Code (Optional)',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
                 ),
-                maxLines: 3,
+                maxLines: 2,
               ),
               const SizedBox(height: 16),
               TextFormField( // New Stock Count field

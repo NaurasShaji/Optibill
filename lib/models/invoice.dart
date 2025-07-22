@@ -27,6 +27,18 @@ class Invoice extends HiveObject {
   @HiveField(6)
   double? totalDiscountOnBill; // Optional, discount applied to the whole bill
 
+  @HiveField(7)
+  String? rightEyeDV; // Right Eye Distance Vision
+
+  @HiveField(8)
+  String? rightEyeNV; // Right Eye Near Vision
+
+  @HiveField(9)
+  String? leftEyeDV;  // Left Eye Distance Visionf
+
+  @HiveField(10)
+  String? leftEyeNV;  // Left Eye Near Vision
+
   Invoice({
     String? invoiceId,
     required this.saleDate,
@@ -35,6 +47,10 @@ class Invoice extends HiveObject {
     this.customerContact,
     required this.paymentMethod,
     this.totalDiscountOnBill,
+    this.rightEyeDV,
+    this.rightEyeNV,
+    this.leftEyeDV,
+    this.leftEyeNV,
   }) : invoiceId = invoiceId ?? const Uuid().v4();
 
   // Computed Property: subtotal (sum of unitSellingPrice * quantity for all items before bill-level discount)
@@ -58,6 +74,10 @@ class Invoice extends HiveObject {
     'customerContact': customerContact,
     'paymentMethod': paymentMethod,
     'totalDiscountOnBill': totalDiscountOnBill,
+    'rightEyeDV': rightEyeDV,
+    'rightEyeNV': rightEyeNV,
+    'leftEyeDV': leftEyeDV,
+    'leftEyeNV': leftEyeNV,
   };
 
   // Create an Invoice object from a JSON map
@@ -71,5 +91,9 @@ class Invoice extends HiveObject {
     customerContact: json['customerContact'] as String?,
     paymentMethod: json['paymentMethod'] as String,
     totalDiscountOnBill: json['totalDiscountOnBill'] as double?,
+    rightEyeDV: json['rightEyeDV'] as String?,
+    rightEyeNV: json['rightEyeNV'] as String?,
+    leftEyeDV: json['leftEyeDV'] as String?,
+    leftEyeNV: json['leftEyeNV'] as String?,
   );
 }

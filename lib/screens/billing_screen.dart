@@ -24,6 +24,11 @@ class _BillingScreenState extends State<BillingScreen> {
   final TextEditingController _customerNameController = TextEditingController();
   final TextEditingController _customerContactController = TextEditingController();
   final TextEditingController _billDiscountController = TextEditingController();
+  // Add new controllers for eye prescription fields
+  final TextEditingController _rightEyeDVController = TextEditingController();
+  final TextEditingController _rightEyeNVController = TextEditingController();
+  final TextEditingController _leftEyeDVController = TextEditingController();
+  final TextEditingController _leftEyeNVController = TextEditingController();
 
   List<InvoiceItem> _currentItems = [];
   String _selectedPaymentMethod = 'Cash';
@@ -51,6 +56,11 @@ class _BillingScreenState extends State<BillingScreen> {
       _selectedPaymentMethod = widget.invoiceToEdit!.paymentMethod;
       _billDiscountController.text = (widget.invoiceToEdit!.totalDiscountOnBill ?? 0.0).toStringAsFixed(2);
       _currentItems = List.from(widget.invoiceToEdit!.items);
+      // Initialize new eye prescription fields
+      _rightEyeDVController.text = widget.invoiceToEdit!.rightEyeDV ?? '';
+      _rightEyeNVController.text = widget.invoiceToEdit!.rightEyeNV ?? '';
+      _leftEyeDVController.text = widget.invoiceToEdit!.leftEyeDV ?? '';
+      _leftEyeNVController.text = widget.invoiceToEdit!.leftEyeNV ?? '';
     }
     _calculateTotals();
   }
@@ -60,6 +70,11 @@ class _BillingScreenState extends State<BillingScreen> {
     _customerNameController.dispose();
     _customerContactController.dispose();
     _billDiscountController.dispose();
+    // Dispose new controllers
+    _rightEyeDVController.dispose();
+    _rightEyeNVController.dispose();
+    _leftEyeDVController.dispose();
+    _leftEyeNVController.dispose();
     super.dispose();
   }
 
@@ -197,6 +212,11 @@ class _BillingScreenState extends State<BillingScreen> {
       customerContact: _customerContactController.text.isEmpty ? null : _customerContactController.text,
       paymentMethod: _selectedPaymentMethod,
       totalDiscountOnBill: billDiscount > 0 ? billDiscount : null,
+      // Add new fields
+      rightEyeDV: _rightEyeDVController.text.isEmpty ? null : _rightEyeDVController.text,
+      rightEyeNV: _rightEyeNVController.text.isEmpty ? null : _rightEyeNVController.text,
+      leftEyeDV: _leftEyeDVController.text.isEmpty ? null : _leftEyeDVController.text,
+      leftEyeNV: _leftEyeNVController.text.isEmpty ? null : _leftEyeNVController.text,
     );
 
     try {
@@ -371,6 +391,11 @@ class _BillingScreenState extends State<BillingScreen> {
                         _selectedPaymentMethod = newValue!;
                       });
                     },
+                    // Pass new controllers
+                    rightEyeDVController: _rightEyeDVController,
+                    rightEyeNVController: _rightEyeNVController,
+                    leftEyeDVController: _leftEyeDVController,
+                    leftEyeNVController: _leftEyeNVController,
                   ),
                   _ItemsSectionCard(
                     currentItems: _currentItems,
@@ -426,6 +451,11 @@ class _CustomerDetailsCard extends StatelessWidget {
   final String selectedPaymentMethod;
   final List<String> paymentMethods;
   final ValueChanged<String?> onPaymentMethodChanged;
+  // Add new controllers
+  final TextEditingController rightEyeDVController;
+  final TextEditingController rightEyeNVController;
+  final TextEditingController leftEyeDVController;
+  final TextEditingController leftEyeNVController;
 
   const _CustomerDetailsCard({
     required this.customerNameController,
@@ -433,6 +463,10 @@ class _CustomerDetailsCard extends StatelessWidget {
     required this.selectedPaymentMethod,
     required this.paymentMethods,
     required this.onPaymentMethodChanged,
+    required this.rightEyeDVController,
+    required this.rightEyeNVController,
+    required this.leftEyeDVController,
+    required this.leftEyeNVController,
   });
 
   @override
@@ -465,6 +499,59 @@ class _CustomerDetailsCard extends StatelessWidget {
                 contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
               ),
               keyboardType: TextInputType.phone,
+            ),
+            SizedBox(height: 10),
+            // New fields for eye prescription
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: rightEyeDVController,
+                    decoration: InputDecoration(
+                      labelText: 'Right Eye DV',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                      contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+                    ),
+                  ),
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: rightEyeNVController,
+                    decoration: InputDecoration(
+                      labelText: 'Right Eye NV',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                      contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: leftEyeDVController,
+                    decoration: InputDecoration(
+                      labelText: 'Left Eye DV',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                      contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+                    ),
+                  ),
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: leftEyeNVController,
+                    decoration: InputDecoration(
+                      labelText: 'Left Eye NV',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                      contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+                    ),
+                  ),
+                ),
+              ],
             ),
             SizedBox(height: 10),
             DropdownButtonFormField<String>(

@@ -11,16 +11,16 @@ class Frame extends HiveObject {
   @HiveField(1)
   String modelName;
 
-  @HiveField(2)
+  @HiveField(2, defaultValue: 0.0)
   double sellingPrice;
 
-  @HiveField(3)
+  @HiveField(3, defaultValue: 0.0)
   double costPrice;
 
   @HiveField(4)
   String brand; // Sub-category for frames
 
-  @HiveField(5)
+  @HiveField(5, defaultValue: 0.0)
   double stock;
 
   @HiveField(6)

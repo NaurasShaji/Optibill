@@ -19,11 +19,11 @@ class LensAdapter extends TypeAdapter<Lens> {
     return Lens(
       id: fields[0] as String?,
       name: fields[1] as String,
-      sellingPrice: fields[2] as double,
-      costPrice: fields[3] as double,
+      sellingPrice: fields[2] == null ? 0.0 : fields[2] as double,
+      costPrice: fields[3] == null ? 0.0 : fields[3] as double,
       company: fields[4] as String,
-      stock: fields[6] as double,
-      description: fields[5] as String?,
+      stock: fields[5] == null ? 0.0 : fields[5] as double,
+      description: fields[6] as String?,
     );
   }
 
@@ -42,9 +42,9 @@ class LensAdapter extends TypeAdapter<Lens> {
       ..writeByte(4)
       ..write(obj.company)
       ..writeByte(5)
-      ..write(obj.description)
+      ..write(obj.stock)
       ..writeByte(6)
-      ..write(obj.stock);
+      ..write(obj.description);
   }
 
   @override
