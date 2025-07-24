@@ -9,7 +9,7 @@ import 'package:optibill/models/invoice_item.dart';
 import 'package:optibill/models/invoice.dart';
 
 // Import your screens
-import 'package:optibill/screens/home_screen.dart';
+import 'package:optibill/screens/login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +29,8 @@ void main() async {
   await Hive.openBox<Frame>('frames');
   await Hive.openBox<Lens>('lenses');
   await Hive.openBox<Invoice>('invoices');
+  // Add a box for user credentials (username/password)
+  await Hive.openBox('user_credentials');
 
   runApp(const MyApp());
 }
@@ -45,7 +47,8 @@ class MyApp extends StatelessWidget {
         visualDensity: VisualDensity.adaptivePlatformDensity,
         fontFamily: 'Inter', // Using Inter font as requested
       ),
-      home: const HomeScreen(),
+      home: const LoginScreen(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }

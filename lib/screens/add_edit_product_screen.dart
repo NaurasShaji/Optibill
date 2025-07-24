@@ -35,7 +35,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         _sellingPriceController.text = widget.product.sellingPrice.toString();
         _costPriceController.text = widget.product.costPrice.toString();
         _brandCompanyController.text = widget.product.brand;
-        _stockController.text = widget.product.stock.toString();
+        _stockController.text = widget.product.stock.toInt().toString();
         _descriptionController.text = widget.product.description ?? '';
       } else if (widget.product is Lens) {
         _productType = 'Lens';
@@ -43,7 +43,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         _sellingPriceController.text = widget.product.sellingPrice.toString();
         _costPriceController.text = widget.product.costPrice.toString();
         _brandCompanyController.text = widget.product.company;
-        _stockController.text = widget.product.stock.toString();
+        _stockController.text = widget.product.stock.toInt().toString();
         _descriptionController.text = widget.product.description ?? '';
       }
     }

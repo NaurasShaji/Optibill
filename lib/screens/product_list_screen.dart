@@ -249,7 +249,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                   String type = product is Frame ? 'Frame' : 'Lens';
                                   String brandCompany = product is Frame ? product.brand : product.company;
                                   String sellingPrice = formatCurrency.format(product.sellingPrice);
-                                  String stock = product is Frame ? product.stock.toString() : product.stock.toString();
+                                  String stock = product is Frame ? product.stock.toInt().toString() : product.stock.toString();
                                   String costPrice = formatCurrency.format(product.costPrice);
 
                                   return DataRow(

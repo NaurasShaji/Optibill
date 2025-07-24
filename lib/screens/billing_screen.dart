@@ -380,18 +380,7 @@ class _BillingScreenState extends State<BillingScreen> {
     final formatDate = DateFormat('dd-MM-yyyy HH:mm');
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_editingInvoiceId != null ? 'Edit Invoice' : 'New Invoice'),
-        centerTitle: true,
-        leading: _editingInvoiceId != null
-            ? IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            Navigator.of(context).pop();
-          },
-        )
-            : null,
-      ),
+
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
