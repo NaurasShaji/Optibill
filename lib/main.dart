@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart'; // For getting app document directory
 
+
 // Import your generated Hive adapters
 import 'package:optibill/models/frame.dart';
 import 'package:optibill/models/lens.dart';
@@ -13,6 +14,7 @@ import 'package:optibill/screens/login_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
 
   // Initialize Hive
   final appDocumentDir = await getApplicationDocumentsDirectory();

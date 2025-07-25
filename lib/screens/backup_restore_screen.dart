@@ -319,18 +319,50 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
   Invoice? _selectedInvoice;
   bool _isSearching = false;
 
+  // New: List of all unique customers (latest invoice per customer)
+  List<Invoice> _allCustomers = [];
+
   @override
   void initState() {
     super.initState();
-    _customerNameController.addListener(() {
-      _searchCustomers(_customerNameController.text);
-    });
+    _loadAllCustomers();
   }
 
   @override
   void dispose() {
     _customerNameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadAllCustomers() async {
+    try {
+      final invoiceBox = Hive.box<Invoice>('invoices');
+
+      final Map<String, Invoice> latestInvoicesByCustomer = {};
+      for (final invoice in invoiceBox.values) {
+        final customerName = invoice.customerName?.trim().toLowerCase() ?? '';
+        final customerContact = invoice.customerContact?.trim() ?? '';
+        final key = '$customerName|$customerContact';
+
+        if (!latestInvoicesByCustomer.containsKey(key) ||
+            invoice.saleDate.isAfter(latestInvoicesByCustomer[key]!.saleDate)) {
+          latestInvoicesByCustomer[key] = invoice;
+        }
+      }
+
+      setState(() {
+        _allCustomers = latestInvoicesByCustomer.values.toList()
+          ..sort((a, b) {
+            final aKey = (a.customerName ?? '') + (a.customerContact ?? '');
+            final bKey = (b.customerName ?? '') + (b.customerContact ?? '');
+            return aKey.compareTo(bKey);
+          });
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading all customers: $e')),
+      );
+    }
   }
 
   Future<void> _searchCustomers(String query) async {
@@ -353,7 +385,7 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
 
       final matchingInvoices = invoiceBox.values
           .where((invoice) =>
-              invoice.customerName?.trim().toLowerCase().startsWith(queryLower) ?? false)
+      invoice.customerName?.trim().toLowerCase().startsWith(queryLower) ?? false)
           .toList();
 
       final Map<String, Invoice> latestInvoicesByCustomer = {};
@@ -394,6 +426,7 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
       padding: const EdgeInsets.all(16.0),
       child: ListView(
         children: [
+          // --- First Card: Search Field and Results ---
           Card(
             elevation: 2,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
@@ -422,6 +455,7 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
                         },
                       ),
                     ),
+                    onChanged: _searchCustomers,
                   ),
                   const SizedBox(height: 12),
                   if (_isSearching)
@@ -458,6 +492,44 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
               ),
             ),
           ),
+
+          const SizedBox(height: 20),
+
+          // --- Second Card: All Customers List Below ---
+          if (_allCustomers.isNotEmpty)
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('All Customers', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 150,
+                      child: ListView.builder(
+                        itemCount: _allCustomers.length,
+                        itemBuilder: (context, index) {
+                          final invoice = _allCustomers[index];
+                          return ListTile(
+                            title: Text(invoice.customerName ?? 'No Name'),
+                            subtitle: Text(invoice.customerContact ?? ''),
+                            trailing: Text('Last: ${DateFormat('dd-MM-yyyy').format(invoice.saleDate)}'),
+                            onTap: () {
+                              setState(() {
+                                _selectedInvoice = invoice;
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -495,14 +567,14 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
         Text('Purchased Items:', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         ...invoice.items.map((item) => Card(
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              child: ListTile(
-                title: Text('${item.productName} (${item.productType})'),
-                subtitle: Text(
-                    'Qty: ${item.quantity} @ ${formatCurrency.format(item.unitSellingPrice)}'),
-                trailing: Text(formatCurrency.format(item.totalSellingPrice)),
-              ),
-            )),
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          child: ListTile(
+            title: Text('${item.productName} (${item.productType})'),
+            subtitle: Text(
+                'Qty: ${item.quantity} @ ${formatCurrency.format(item.unitSellingPrice)}'),
+            trailing: Text(formatCurrency.format(item.totalSellingPrice)),
+          ),
+        )),
         const Divider(height: 20),
         Text('Bill Summary:', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),

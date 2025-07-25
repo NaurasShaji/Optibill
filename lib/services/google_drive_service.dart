@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:http/http.dart' as http;
@@ -25,28 +26,48 @@ class GoogleHttpClient extends http.BaseClient {
 }
 
 class GoogleDriveService {
-  final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: [drive.DriveApi.driveFileScope], // CHANGED: Using drive.file scope for visible files
+  final List<String> _scopes = [drive.DriveApi.driveFileScope];
+
+  GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: [drive.DriveApi.driveFileScope],
   );
 
   GoogleSignInAccount? _currentUser;
   drive.DriveApi? _driveApi;
+  GoogleHttpClient? _authClient;
 
   GoogleSignInAccount? get currentUser => _currentUser;
 
-  // Initialize and sign in
+  // Sign in manually
   Future<bool> signIn() async {
     try {
       _currentUser = await _googleSignIn.signIn();
-      if (_currentUser == null) {
-        return false; // User cancelled sign-in
-      }
-      final authHeaders = await _currentUser!.authHeaders;
-      final authenticatedClient = GoogleHttpClient(authHeaders);
-      _driveApi = drive.DriveApi(authenticatedClient);
+      if (_currentUser == null) return false;
+
+      final headers = await _currentUser!.authHeaders;
+      _authClient = GoogleHttpClient(headers);
+      _driveApi = drive.DriveApi(_authClient!);
       return true;
     } catch (e) {
-      print('Error signing in to Google Drive: $e');
+      print('Google sign-in error: $e');
+      return false;
+    }
+  }
+
+  // Silent sign-in (used for background tasks)
+  Future<bool> signInSilently() async {
+    try {
+      final account = await _googleSignIn.signInSilently();
+      if (account != null) {
+        _currentUser = account;
+        final headers = await _currentUser!.authHeaders;
+        _authClient = GoogleHttpClient(headers);
+        _driveApi = drive.DriveApi(_authClient!);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      print('Silent sign-in failed: $e');
       return false;
     }
   }
@@ -55,6 +76,7 @@ class GoogleDriveService {
     await _googleSignIn.signOut();
     _currentUser = null;
     _driveApi = null;
+    _authClient = null;
   }
 
   bool get isSignedIn => _currentUser != null;
@@ -62,33 +84,26 @@ class GoogleDriveService {
   // --- Backup Logic ---
   Future<void> backupData() async {
     if (!isSignedIn) {
-      print('Not signed in to Google Drive.');
-      bool success = await signIn();
-      if (!success) return;
+      bool signedIn = await signInSilently();
+      if (!signedIn) signedIn = await signIn();
+      if (!signedIn) return;
     }
 
     try {
-      // 1. Collect all data from Hive boxes
       final framesBox = Hive.box<Frame>('frames');
       final lensesBox = Hive.box<Lens>('lenses');
       final invoicesBox = Hive.box<Invoice>('invoices');
 
-      final Map<String, dynamic> backupData = {
+      final backupData = {
         'frames': framesBox.values.map((f) => f.toJson()).toList(),
         'lenses': lensesBox.values.map((l) => l.toJson()).toList(),
         'invoices': invoicesBox.values.map((i) => i.toJson()).toList(),
       };
 
-      final String jsonString = jsonEncode(backupData);
-      final String fileName = 'optibill_backup_${DateTime.now().toIso8601String()}.json';
+      final jsonString = jsonEncode(backupData);
+      final fileName = 'optibill_backup_${DateTime.now().toIso8601String()}.json';
 
-      // 2. Upload to Google Drive (directly in My Drive)
-      final drive.File fileMetadata = drive.File();
-      fileMetadata.name = fileName;
-      // Removed parents = ['appDataFolder'] as we are now using drive.file scope,
-      // which puts files in My Drive by default or a specified folder.
-      // If you want a specific folder in My Drive, you'd need to find/create its ID.
-      // For simplicity, it will go to the root of My Drive.
+      final fileMetadata = drive.File()..name = fileName;
 
       final media = drive.Media(
         Stream.value(utf8.encode(jsonString)),
@@ -97,51 +112,55 @@ class GoogleDriveService {
       );
 
       await _driveApi!.files.create(fileMetadata, uploadMedia: media);
-      print('Backup successful: $fileName');
+      print(' Backup uploaded: $fileName');
     } catch (e) {
-      print('Error during backup: $e');
-      rethrow; // Re-throw to handle in UI
+      print(' Backup error: $e');
+      rethrow;
     }
   }
 
   // --- Restore Logic ---
   Future<List<drive.File>> listBackupFiles() async {
     if (!isSignedIn) {
-      print('Not signed in to Google Drive.');
-      bool success = await signIn();
-      if (!success) return [];
+      bool signedIn = await signInSilently();
+      if (!signedIn) signedIn = await signIn();
+      if (!signedIn) return [];
     }
 
     try {
-      // List files from 'root' (My Drive) when using drive.file scope
-      final fileList = await _driveApi!.files.list(q: "name contains 'optibill_backup_' and mimeType='application/json'", spaces: 'drive');
+      final fileList = await _driveApi!.files.list(
+        q: "name contains 'optibill_backup_' and mimeType='application/json'",
+        spaces: 'drive',
+        orderBy: 'createdTime desc',
+      );
       return fileList.files ?? [];
     } catch (e) {
-      print('Error listing backup files: $e');
+      print(' Error listing backups: $e');
       return [];
     }
   }
 
   Future<void> restoreData(String fileId) async {
     if (!isSignedIn) {
-      print('Not signed in to Google Drive.');
-      bool success = await signIn();
-      if (!success) return;
+      bool signedIn = await signInSilently();
+      if (!signedIn) signedIn = await signIn();
+      if (!signedIn) return;
     }
 
     try {
-      // 1. Download the selected file
-      final mediaFile = await _driveApi!.files.get(fileId, downloadOptions: drive.DownloadOptions.fullMedia) as drive.Media;
+      final mediaFile = await _driveApi!.files.get(
+        fileId,
+        downloadOptions: drive.DownloadOptions.fullMedia,
+      ) as drive.Media;
+
       final responseBytes = await mediaFile.stream.expand((bytes) => bytes).toList();
       final String jsonString = utf8.decode(responseBytes);
       final Map<String, dynamic> restoredData = jsonDecode(jsonString);
 
-      // 2. Clear existing Hive data (with confirmation in UI)
       await Hive.box<Frame>('frames').clear();
       await Hive.box<Lens>('lenses').clear();
       await Hive.box<Invoice>('invoices').clear();
 
-      // 3. Populate Hive with restored data
       final framesBox = Hive.box<Frame>('frames');
       final lensesBox = Hive.box<Lens>('lenses');
       final invoicesBox = Hive.box<Invoice>('invoices');
@@ -156,10 +175,10 @@ class GoogleDriveService {
         await invoicesBox.put(invoiceJson['invoiceId'], Invoice.fromJson(invoiceJson));
       }
 
-      print('Restore successful from file ID: $fileId');
+      print(' Restore complete from file ID: $fileId');
     } catch (e) {
-      print('Error during restore: $e');
-      rethrow; // Re-throw to handle in UI
+      print(' Restore error: $e');
+      rethrow;
     }
   }
 }
