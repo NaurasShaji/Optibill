@@ -876,7 +876,7 @@ class _RecentInvoicesCard extends StatelessWidget {
                       child: ListTile(
                         title: Text('Invoice ID: ${invoice.invoiceId.substring(0, 8).toUpperCase()}'),
                         subtitle: Text(
-                          '${formatDate.format(invoice.saleDate)} - ${formatCurrency.format(invoice.totalAmount)}',
+                          '${formatDate.format(invoice.saleDate)} : ${formatCurrency.format(invoice.totalAmount)}',
                         ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,

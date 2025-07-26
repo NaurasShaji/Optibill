@@ -51,9 +51,12 @@ class _HomeScreenState extends State<HomeScreen> {
         );
         break;
       case 'logout':
-        // Set isLoggedIn to false before logging out
-        final userBox = await Hive.openBox('user_credentials');
-        await userBox.put('isLoggedIn', false);
+      // --- "Stay Logged In" logic added here ---
+      // Clear the login state from Hive so the user has to log in next time.
+        final authBox = Hive.box('auth');
+        await authBox.put('isLoggedIn', false);
+        // --- End of added logic ---
+
         // Navigate to the LoginScreen and remove all previous routes.
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -66,71 +69,71 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        // The title now dynamically updates based on the selected index.
-        title: Text(_appBarTitles[_selectedIndex]),
-        centerTitle: true,
-        // Set the AppBar color.
-        backgroundColor: Colors.blue[800],
-        // Add the three-dot menu.
-        actions: <Widget>[
-          PopupMenuButton<String>(
-            onSelected: _handleMenuSelection,
-            itemBuilder: (BuildContext context) {
-              return [
-                const PopupMenuItem<String>(
-                  value: 'settings',
-                  child: Row(
-                    children: [
-                      Icon(Icons.settings, color: Colors.black54),
-                      SizedBox(width: 8),
-                      Text('Settings'),
-                    ],
+        appBar: AppBar(
+          // The title now dynamically updates based on the selected index.
+          title: Text(_appBarTitles[_selectedIndex]),
+          centerTitle: true,
+          // Set the AppBar color.
+          backgroundColor: Colors.blue[800],
+          // Add the three-dot menu.
+          actions: <Widget>[
+            PopupMenuButton<String>(
+              onSelected: _handleMenuSelection,
+              itemBuilder: (BuildContext context) {
+                return [
+                  const PopupMenuItem<String>(
+                    value: 'settings',
+                    child: Row(
+                      children: [
+                        Icon(Icons.settings, color: Colors.black54),
+                        SizedBox(width: 8),
+                        Text('Settings'),
+                      ],
+                    ),
                   ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'logout',
-                  child: Row(
-                    children: [
-                      Icon(Icons.logout, color: Colors.black54),
-                      SizedBox(width: 8),
-                      Text('Logout'),
-                    ],
+                  const PopupMenuItem<String>(
+                    value: 'logout',
+                    child: Row(
+                      children: [
+                        Icon(Icons.logout, color: Colors.black54),
+                        SizedBox(width: 8),
+                        Text('Logout'),
+                      ],
+                    ),
                   ),
-                ),
-              ];
-            },
-          ),
-        ],
-      ),
-      body: Center(
-        child: _widgetOptions.elementAt(_selectedIndex),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.receipt),
-            label: 'Billing',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.inventory),
-            label: 'Products',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.analytics),
-            label: 'Reports',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.cloud_upload),
-            label: 'Backup/Restore',
-          ),
-        ],
-        currentIndex: _selectedIndex,
-        selectedItemColor: Colors.blue[800],
-        unselectedItemColor: Colors.grey,
-        onTap: _onItemTapped,
-        type: BottomNavigationBarType.fixed, // Ensures all labels are visible
-      ),
-    );
-  }
+                ];
+              },
+            ),
+          ],
+        ),
+        body: Center(
+          child: _widgetOptions.elementAt(_selectedIndex),
+        ),
+        bottomNavigationBar: BottomNavigationBar(
+            items: const <BottomNavigationBarItem>[
+              BottomNavigationBarItem(
+                icon: Icon(Icons.receipt),
+                label: 'Billing',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.inventory),
+                label: 'Products',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.analytics),
+                label: 'Reports',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.cloud_upload),
+                label: 'Backup/Restore',
+              ),
+            ],
+            currentIndex: _selectedIndex,
+            selectedItemColor: Colors.blue[800],
+            unselectedItemColor: Colors.grey,
+            onTap: _onItemTapped,
+            type: BottomNavigationBarType.fixed, // Ensures all labels are visible
+            ),
+        );
+    }
 }
