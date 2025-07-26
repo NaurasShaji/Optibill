@@ -49,7 +49,7 @@ class _BillingScreenState extends State<BillingScreen> {
     _initializeBillingSession();
   }
 
-  void _initializeBillingSession() {
+  void _initializeBillingSession() async {
     if (widget.invoiceToEdit != null) {
       _editingInvoiceId = widget.invoiceToEdit!.invoiceId;
       _customerNameController.text = widget.invoiceToEdit!.customerName ?? '';
@@ -63,10 +63,15 @@ class _BillingScreenState extends State<BillingScreen> {
       _leftEyeDVController.text = widget.invoiceToEdit!.leftEyeDV ?? '';
       _leftEyeNVController.text = widget.invoiceToEdit!.leftEyeNV ?? '';
       _noteController.text = widget.invoiceToEdit!.note ?? '';
+
+      // Restore stock when editing (add back the quantities that were sold)
+      for (var item in widget.invoiceToEdit!.items) {
+        await _productService.increaseStock(item.productId, item.productType, item.quantity);
+      }
     }
     _calculateTotals();
   }
-
+  
   @override
   void dispose() {
     _customerNameController.dispose();
@@ -239,25 +244,7 @@ class _BillingScreenState extends State<BillingScreen> {
 
     try {
       if (_editingInvoiceId != null) {
-        // Restore stock for old invoice items
-        for (var oldItem in widget.invoiceToEdit!.items) {
-          await _productService.increaseStock(oldItem.productId, oldItem.productType, oldItem.quantity);
-        }
-        // Check again for new stock after restoration
-        for (var item in _currentItems) {
-          final product = _productService.getProductById(item.productId, item.productType);
-          if (product == null || product.stock < item.quantity) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Insufficient stock for ${item.productName}. Available: ${product?.stock ?? 0}')),
-            );
-            // Re-decrease stock for old items to keep state consistent
-            for (var oldItem in widget.invoiceToEdit!.items) {
-              await _productService.decreaseStock(oldItem.productId, oldItem.productType, oldItem.quantity);
-            }
-            return;
-          }
-        }
-        // Decrease stock for new invoice items
+        // For editing: stock was already restored in initState, now just decrease for new quantities
         for (var item in _currentItems) {
           await _productService.decreaseStock(item.productId, item.productType, item.quantity);
         }
@@ -301,6 +288,19 @@ class _BillingScreenState extends State<BillingScreen> {
         SnackBar(content: Text('Error saving/updating invoice: $e')),
       );
     }
+  }
+
+  // Handle back navigation for editing mode
+  Future<bool> _onWillPop() async {
+    if (_editingInvoiceId != null) {
+      // If editing, we need to restore the original stock state
+      // First, restore current edit state (increase stock back)
+      // This is already done, but we need to decrease back to original quantities
+      for (var item in widget.invoiceToEdit!.items) {
+        await _productService.decreaseStock(item.productId, item.productType, item.quantity);
+      }
+    }
+    return true;
   }
 
   Future<void> _showPdfGenerationDialog(Invoice invoice) async {
@@ -379,72 +379,88 @@ class _BillingScreenState extends State<BillingScreen> {
     final formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
     final formatDate = DateFormat('dd-MM-yyyy HH:mm');
 
-    return Scaffold(
-
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                children: [
-                  _CustomerDetailsCard(
-                    customerNameController: _customerNameController,
-                    customerContactController: _customerContactController,
-                    selectedPaymentMethod: _selectedPaymentMethod,
-                    paymentMethods: _paymentMethods,
-                    onPaymentMethodChanged: (newValue) {
-                      setState(() {
-                        _selectedPaymentMethod = newValue!;
-                      });
-                    },
-                    // Pass new controllers
-                    rightEyeDVController: _rightEyeDVController,
-                    rightEyeNVController: _rightEyeNVController,
-                    leftEyeDVController: _leftEyeDVController,
-                    leftEyeNVController: _leftEyeNVController,
-                    noteController: _noteController,
-                  ),
-                  _ItemsSectionCard(
-                    currentItems: _currentItems,
-                    editingInvoiceId: _editingInvoiceId,
-                    formatCurrency: formatCurrency,
-                    showProductPicker: _showProductPicker,
-                    removeItemFromInvoice: _removeItemFromInvoice,
-                    editItemPrice: _editItemPrice,
-                    editItemQuantity: _editItemQuantity,
-                    editItemDiscount: _editItemDiscount,
-                  ),
-                  _BillSummaryCard(
-                    subtotal: _subtotal,
-                    billDiscountController: _billDiscountController,
-                    totalAmount: _totalAmount,
-                    totalProfit: _totalProfit,
-                    formatCurrency: formatCurrency,
-                  ),
-                  if (_editingInvoiceId == null)
-                    _RecentInvoicesCard(
-                      formatDate: formatDate,
-                      formatCurrency: formatCurrency,
-                      confirmDeleteInvoice: _confirmDeleteInvoice,
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        appBar: _editingInvoiceId != null 
+          ? AppBar(
+              title: Text('Edit Invoice'),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () async {
+                  await _onWillPop();
+                  Navigator.of(context).pop();
+                },
+              ),
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            )
+          : null,
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  children: [
+                    _CustomerDetailsCard(
+                      customerNameController: _customerNameController,
+                      customerContactController: _customerContactController,
+                      selectedPaymentMethod: _selectedPaymentMethod,
+                      paymentMethods: _paymentMethods,
+                      onPaymentMethodChanged: (newValue) {
+                        setState(() {
+                          _selectedPaymentMethod = newValue!;
+                        });
+                      },
+                      // Pass new controllers
+                      rightEyeDVController: _rightEyeDVController,
+                      rightEyeNVController: _rightEyeNVController,
+                      leftEyeDVController: _leftEyeDVController,
+                      leftEyeNVController: _leftEyeNVController,
+                      noteController: _noteController,
                     ),
-                ],
+                    _ItemsSectionCard(
+                      currentItems: _currentItems,
+                      editingInvoiceId: _editingInvoiceId,
+                      formatCurrency: formatCurrency,
+                      showProductPicker: _showProductPicker,
+                      removeItemFromInvoice: _removeItemFromInvoice,
+                      editItemPrice: _editItemPrice,
+                      editItemQuantity: _editItemQuantity,
+                      editItemDiscount: _editItemDiscount,
+                    ),
+                    _BillSummaryCard(
+                      subtotal: _subtotal,
+                      billDiscountController: _billDiscountController,
+                      totalAmount: _totalAmount,
+                      totalProfit: _totalProfit,
+                      formatCurrency: formatCurrency,
+                    ),
+                    if (_editingInvoiceId == null)
+                      _RecentInvoicesCard(
+                        formatDate: formatDate,
+                        formatCurrency: formatCurrency,
+                        confirmDeleteInvoice: _confirmDeleteInvoice,
+                      ),
+                  ],
+                ),
               ),
-            ),
-            SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: _saveOrUpdateInvoice,
-              icon: Icon(_editingInvoiceId != null ? Icons.save : Icons.add),
-              label: Text(_editingInvoiceId != null ? 'Update Invoice' : 'Save Invoice'),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 30),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-                textStyle: const TextStyle(fontSize: 20),
+              SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: _saveOrUpdateInvoice,
+                icon: Icon(_editingInvoiceId != null ? Icons.save : Icons.add),
+                label: Text(_editingInvoiceId != null ? 'Update Invoice' : 'Save Invoice'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 30),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  textStyle: const TextStyle(fontSize: 20),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -632,17 +648,16 @@ class _ItemsSectionCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text('Items', style: Theme.of(context).textTheme.titleLarge),
-                if (editingInvoiceId == null)
-                  ElevatedButton.icon(
-                    onPressed: showProductPicker,
-                    icon: const Icon(Icons.add_shopping_cart),
-                    label: const Text('Add Product'),
-                    style: ElevatedButton.styleFrom(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                    ),
+                ElevatedButton.icon(
+                  onPressed: showProductPicker,
+                  icon: const Icon(Icons.add_shopping_cart),
+                  label: const Text('Add Product'),
+                  style: ElevatedButton.styleFrom(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
                   ),
+                ),
               ],
             ),
             SizedBox(height: 10),
@@ -672,11 +687,10 @@ class _ItemsSectionCard extends StatelessWidget {
                                 style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
                             ),
-                            if (editingInvoiceId == null)
-                              IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () => removeItemFromInvoice(index),
-                              ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => removeItemFromInvoice(index),
+                            ),
                           ],
                         ),
                         Row(
@@ -703,31 +717,30 @@ class _ItemsSectionCard extends StatelessWidget {
                             ),
                           ],
                         ),
-                        if (editingInvoiceId == null)
-                          Row(
-                            children: [
-                              const Text('Qty: '),
-                              SizedBox(
-                                width: 50,
-                                child: TextFormField(
-                                  initialValue: item.quantity.toString(),
-                                  keyboardType: TextInputType.number,
-                                  onChanged: (value) {
-                                    int? newQty = int.tryParse(value);
-                                    if (newQty != null) {
-                                      editItemQuantity(index, newQty);
-                                    }
-                                  },
-                                  textAlign: TextAlign.center,
-                                  decoration: const InputDecoration(
-                                    isDense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                    border: UnderlineInputBorder(),
-                                  ),
+                        Row(
+                          children: [
+                            const Text('Qty: '),
+                            SizedBox(
+                              width: 50,
+                              child: TextFormField(
+                                initialValue: item.quantity.toString(),
+                                keyboardType: TextInputType.number,
+                                onChanged: (value) {
+                                  int? newQty = int.tryParse(value);
+                                  if (newQty != null) {
+                                    editItemQuantity(index, newQty);
+                                  }
+                                },
+                                textAlign: TextAlign.center,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  border: UnderlineInputBorder(),
                                 ),
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
+                        ),
                         Align(
                           alignment: Alignment.centerRight,
                           child: Text(
