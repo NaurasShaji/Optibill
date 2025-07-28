@@ -3,7 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:optibill/screens/home_screen.dart';
 import 'package:optibill/screens/login_screen.dart';
-
+import 'package:optibill/utils/initial_data.dart';
 // Import your models (assuming they are needed for other initializations)
 import 'package:optibill/models/frame.dart';
 import 'package:optibill/models/lens.dart';
@@ -18,6 +18,7 @@ void main() async {
   final appDocumentDir = await getApplicationDocumentsDirectory();
   // Corrected a small typo here from appDocument_dir to appDocumentDir
   await Hive.initFlutter(appDocumentDir.path);
+
 
   // Register all necessary Hive Adapters.
   Hive.registerAdapter(FrameAdapter());
@@ -36,7 +37,7 @@ void main() async {
   final authBox = Hive.box('auth');
   // Check if the user is already logged in.
   final bool isLoggedIn = authBox.get('isLoggedIn', defaultValue: false);
-
+  await InitialDataLoader.loadInitialProducts();
   // Pass the login status to the MyApp widget.
   runApp(MyApp(isLoggedIn: isLoggedIn));
 }

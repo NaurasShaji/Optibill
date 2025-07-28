@@ -4,6 +4,9 @@ import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:hive/hive.dart';
 import 'package:intl/intl.dart';
 import 'package:optibill/models/invoice.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 
 class BackupRestoreScreen extends StatelessWidget {
   const BackupRestoreScreen({super.key});
@@ -48,12 +51,88 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
   bool _isBackingUp = false;
   bool _isRestoring = false;
   List<drive.File> _backupFiles = [];
+  Timer? _autoBackupTimer;
+  DateTime? _lastAutoBackupTime;
+
+  static const String _lastAutoBackupTimeKey = 'lastAutoBackupTime';
+  static const Duration _autoBackupInterval = Duration(days: 14);
 
   @override
   void initState() {
     super.initState();
     _checkSignInStatus();
+    _loadLastAutoBackupTime();
+    _startAutoBackupTimer();
   }
+
+  @override
+  void dispose() {
+    _autoBackupTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadLastAutoBackupTime() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastBackupMillis = prefs.getInt(_lastAutoBackupTimeKey);
+    if (lastBackupMillis != null) {
+      _lastAutoBackupTime = DateTime.fromMillisecondsSinceEpoch(lastBackupMillis);
+    }
+    setState(() {}); // Update UI to show last backup time
+  }
+
+  Future<void> _saveLastAutoBackupTime() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lastAutoBackupTimeKey, DateTime.now().millisecondsSinceEpoch);
+    _lastAutoBackupTime = DateTime.now();
+    setState(() {}); // Update UI
+  }
+
+  void _startAutoBackupTimer() {
+    // Calculate time until next backup
+    Duration timeUntilNextBackup = _autoBackupInterval;
+    if (_lastAutoBackupTime != null) {
+      final timeSinceLastBackup = DateTime.now().difference(_lastAutoBackupTime!);
+      if (timeSinceLastBackup < _autoBackupInterval) {
+        timeUntilNextBackup = _autoBackupInterval - timeSinceLastBackup;
+      } else {
+        // If more than 2 weeks have passed, schedule backup immediately
+        timeUntilNextBackup = Duration.zero;
+      }
+    }
+
+    _autoBackupTimer = Timer.periodic(timeUntilNextBackup, (timer) {
+      _performAutoBackup();
+      // After the first backup, the timer will tick every 2 weeks
+      _autoBackupTimer?.cancel(); // Cancel the current timer
+      _autoBackupTimer = Timer.periodic(_autoBackupInterval, (timer) {
+        _performAutoBackup();
+      });
+    });
+  }
+
+
+  Future<void> _performAutoBackup() async {
+    // Only perform auto-backup if signed in and connected to the internet
+    if (_googleDriveService.isSignedIn) {
+      final connectivityResult = await (Connectivity().checkConnectivity());
+      if (connectivityResult != ConnectivityResult.none) {
+        print('Attempting auto-backup...');
+        try {
+          await _googleDriveService.backupData();
+          print('Auto-backup successful!');
+          _saveLastAutoBackupTime(); // Save timestamp of successful auto-backup
+        } catch (e) {
+          print('Auto-backup failed: $e');
+          // Handle backup failure (e.g., show a silent notification)
+        }
+      } else {
+        print('No internet connection for auto-backup.');
+      }
+    } else {
+      print('Not signed in to Google Drive for auto-backup.');
+    }
+  }
+
 
   Future<void> _checkSignInStatus() async {
     setState(() {
@@ -108,6 +187,7 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
         const SnackBar(content: Text('Data backed up successfully!')),
       );
       _listBackupFiles();
+      _saveLastAutoBackupTime(); // Also save timestamp for manual backups
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Backup failed: $e')),
@@ -242,6 +322,13 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
             ),
           ),
           const SizedBox(height: 24),
+          Text(
+            _lastAutoBackupTime == null
+                ? 'Last auto-backup: Never'
+                : 'Last auto-backup: ${DateFormat('dd-MM-yyyy HH:mm').format(_lastAutoBackupTime!)}',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 16),
           ElevatedButton.icon(
             onPressed: _googleDriveService.isSignedIn && !_isBackingUp ? _handleBackup : null,
             icon: _isBackingUp ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.cloud_upload),
@@ -287,7 +374,8 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
                         final file = _backupFiles[index];
                         return ListTile(
                           title: Text(file.name ?? 'Unknown File'),
-                          subtitle: Text('ID: ${file.id ?? 'N/A'}'),
+                          subtitle: Text(
+                              'Backup Date: ${file.createdTime != null ? DateFormat('dd-MM-yyyy HH:mm').format(file.createdTime!) : 'N/A'}'),
                           trailing: IconButton(
                             icon: const Icon(Icons.restore, color: Colors.blue),
                             onPressed: () => _handleRestore(file),
