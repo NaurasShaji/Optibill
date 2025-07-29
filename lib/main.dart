@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:optibill/screens/home_screen.dart';
 import 'package:optibill/screens/login_screen.dart';
 import 'package:optibill/utils/initial_data.dart';
+import 'package:optibill/services/google_drive_service.dart'; // Import the Google Drive service
 // Import your models (assuming they are needed for other initializations)
 import 'package:optibill/models/frame.dart';
 import 'package:optibill/models/lens.dart';
@@ -35,19 +36,28 @@ void main() async {
   // --- Open a box for authentication state ---
   await Hive.openBox('auth');
   final authBox = Hive.box('auth');
+
+
   // Check if the user is already logged in.
   final bool isLoggedIn = authBox.get('isLoggedIn', defaultValue: false);
   await InitialDataLoader.loadInitialProducts();
-  // Pass the login status to the MyApp widget.
-  runApp(MyApp(isLoggedIn: isLoggedIn));
+
+  // Attempt silent sign-in to Google Drive at startup if user is logged in
+  bool googleDriveSignedIn = false;
+    googleDriveSignedIn = await GoogleDriveService().signInSilently();
+  
+
+  // Pass the login status and Google Drive sign-in status to the MyApp widget.
+  runApp(MyApp(isLoggedIn: isLoggedIn, googleDriveSignedIn: googleDriveSignedIn));
 }
 
 class MyApp extends StatelessWidget {
   // --- This property holds the login status ---
   final bool isLoggedIn;
+  final bool googleDriveSignedIn; // Add property for Google Drive sign-in status
 
-  // --- The constructor now accepts the isLoggedIn parameter ---
-  const MyApp({super.key, required this.isLoggedIn});
+  // --- The constructor now accepts the isLoggedIn and googleDriveSignedIn parameters ---
+  const MyApp({super.key, required this.isLoggedIn, required this.googleDriveSignedIn});
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +69,7 @@ class MyApp extends StatelessWidget {
         fontFamily: 'Inter', // Using Inter font as requested
       ),
       // --- Choose the home screen based on the login status ---
+      // You might want to pass googleDriveSignedIn to HomeScreen if needed there
       home: isLoggedIn ? const HomeScreen() : const LoginScreen(),
       debugShowCheckedModeBanner: false,
     );
