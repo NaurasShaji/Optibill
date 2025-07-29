@@ -55,7 +55,7 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
   DateTime? _lastAutoBackupTime;
 
   static const String _lastAutoBackupTimeKey = 'lastAutoBackupTime';
-  static const Duration _autoBackupInterval = Duration(days: 14);
+  static const Duration _autoBackupInterval = Duration(days: 7);
 
   @override
   void initState() {
@@ -77,14 +77,18 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
     if (lastBackupMillis != null) {
       _lastAutoBackupTime = DateTime.fromMillisecondsSinceEpoch(lastBackupMillis);
     }
-    setState(() {}); // Update UI to show last backup time
+    if (mounted) {
+      setState(() {}); // Update UI to show last backup time
+    }
   }
 
   Future<void> _saveLastAutoBackupTime() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_lastAutoBackupTimeKey, DateTime.now().millisecondsSinceEpoch);
     _lastAutoBackupTime = DateTime.now();
-    setState(() {}); // Update UI
+    if (mounted) {
+      setState(() {}); // Update UI
+    }
   }
 
   void _startAutoBackupTimer() {
@@ -110,7 +114,6 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
     });
   }
 
-
   Future<void> _performAutoBackup() async {
     // Only perform auto-backup if signed in and connected to the internet
     if (_googleDriveService.isSignedIn) {
@@ -133,97 +136,146 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
     }
   }
 
-
+  // FIXED: Properly check existing sign-in status
   Future<void> _checkSignInStatus() async {
+    if (!mounted) return;
+    
     setState(() {
-      _isSigningIn = false;
+      _isSigningIn = true; // Show loading while checking
     });
+    
+    try {
+      // Check if user is already signed in silently
+      bool isSignedIn = await _googleDriveService.signInSilently();
+      
+      if (isSignedIn) {
+        // If signed in, load backup files automatically
+        await _listBackupFiles();
+        print('User already signed in to Google Drive');
+      } else {
+        print('User not signed in to Google Drive');
+      }
+    } catch (e) {
+      print('Error checking sign-in status: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSigningIn = false;
+        });
+      }
+    }
   }
 
   Future<void> _handleSignIn() async {
+    if (!mounted) return;
+    
     setState(() {
       _isSigningIn = true;
     });
     try {
       bool success = await _googleDriveService.signIn();
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Signed in to Google Drive!')),
-        );
-        _listBackupFiles();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Signed in to Google Drive!')),
+          );
+        }
+        await _listBackupFiles(); // Load backup files after successful sign-in
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Google Sign-In cancelled or failed.')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Google Sign-In cancelled or failed.')),
+          );
+        }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error during sign-in: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error during sign-in: $e')),
+        );
+      }
     } finally {
-      setState(() {
-        _isSigningIn = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSigningIn = false;
+        });
+      }
     }
   }
 
   Future<void> _handleSignOut() async {
     await _googleDriveService.signOut();
-    setState(() {
-      _backupFiles.clear();
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Signed out from Google Drive.')),
-    );
+    if (mounted) {
+      setState(() {
+        _backupFiles.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Signed out from Google Drive.')),
+      );
+    }
   }
 
   Future<void> _handleBackup() async {
+    if (!mounted) return;
+    
     setState(() {
       _isBackingUp = true;
     });
     try {
       await _googleDriveService.backupData();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Data backed up successfully!')),
-      );
-      _listBackupFiles();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Data backed up successfully!')),
+        );
+      }
+      await _listBackupFiles(); // Refresh backup files list
       _saveLastAutoBackupTime(); // Also save timestamp for manual backups
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Backup failed: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Backup failed: $e')),
+        );
+      }
     } finally {
-      setState(() {
-        _isBackingUp = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isBackingUp = false;
+        });
+      }
     }
   }
 
   Future<void> _listBackupFiles() async {
     if (!_googleDriveService.isSignedIn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please sign in to list backup files.')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please sign in to list backup files.')),
+        );
+      }
       return;
     }
     try {
       final files = await _googleDriveService.listBackupFiles();
-      setState(() {
-        _backupFiles = files;
-      });
-      if (files.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No backup files found.')),
-        );
+      if (mounted) {
+        setState(() {
+          _backupFiles = files;
+        });
+        if (files.isEmpty) {
+          print('No backup files found.'); // Changed to print instead of snackbar for silent loading
+        }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error listing backup files: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error listing backup files: $e')),
+        );
+      }
     }
   }
 
   Future<void> _handleRestore(drive.File file) async {
+    if (!mounted) return;
+    
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -241,23 +293,31 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
               child: const Text('Restore', style: TextStyle(color: Colors.red)),
               onPressed: () async {
                 Navigator.of(context).pop();
-                setState(() {
-                  _isRestoring = true;
-                });
+                if (mounted) {
+                  setState(() {
+                    _isRestoring = true;
+                  });
+                }
                 try {
                   await _googleDriveService.restoreData(file.id!);
                   await _listBackupFiles();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Data restored successfully!')),
-                  );
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Data restored successfully!')),
+                    );
+                  }
                 } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Restore failed: $e')),
-                  );
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Restore failed: $e')),
+                    );
+                  }
                 } finally {
-                  setState(() {
-                    _isRestoring = false;
-                  });
+                  if (mounted) {
+                    setState(() {
+                      _isRestoring = false;
+                    });
+                  }
                 }
               },
             ),
@@ -438,34 +498,42 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
         }
       }
 
-      setState(() {
-        _allCustomers = latestInvoicesByCustomer.values.toList()
-          ..sort((a, b) {
-            final aKey = (a.customerName ?? '') + (a.customerContact ?? '');
-            final bKey = (b.customerName ?? '') + (b.customerContact ?? '');
-            return aKey.compareTo(bKey);
-          });
-      });
+      if (mounted) {
+        setState(() {
+          _allCustomers = latestInvoicesByCustomer.values.toList()
+            ..sort((a, b) {
+              final aKey = (a.customerName ?? '') + (a.customerContact ?? '');
+              final bKey = (b.customerName ?? '') + (b.customerContact ?? '');
+              return aKey.compareTo(bKey);
+            });
+        });
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading all customers: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading all customers: $e')),
+        );
+      }
     }
   }
 
   Future<void> _searchCustomers(String query) async {
     if (query.trim().isEmpty) {
-      setState(() {
-        _foundInvoices = [];
-        _selectedInvoice = null;
-      });
+      if (mounted) {
+        setState(() {
+          _foundInvoices = [];
+          _selectedInvoice = null;
+        });
+      }
       return;
     }
 
-    setState(() {
-      _isSearching = true;
-      _selectedInvoice = null;
-    });
+    if (mounted) {
+      setState(() {
+        _isSearching = true;
+        _selectedInvoice = null;
+      });
+    }
 
     try {
       final invoiceBox = Hive.box<Invoice>('invoices');
@@ -494,17 +562,23 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
           return aKey.compareTo(bKey);
         });
 
-      setState(() {
-        _foundInvoices = results;
-      });
+      if (mounted) {
+        setState(() {
+          _foundInvoices = results;
+        });
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error searching for customers: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error searching for customers: $e')),
+        );
+      }
     } finally {
-      setState(() {
-        _isSearching = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSearching = false;
+        });
+      }
     }
   }
 
