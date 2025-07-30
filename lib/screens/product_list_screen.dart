@@ -4,6 +4,7 @@ import 'package:optibill/models/frame.dart';
 import 'package:optibill/models/lens.dart';
 import 'package:optibill/services/product_service.dart';
 import 'package:optibill/screens/add_edit_product_screen.dart';
+import 'package:optibill/screens/view_product_screen.dart';
 import 'package:intl/intl.dart';
 
 class ProductListScreen extends StatefulWidget {
@@ -131,6 +132,16 @@ class _ProductListScreenState extends State<ProductListScreen> {
     );
   }
 
+  // --- FIXED: Function to handle navigation to the view screen ---
+  void _navigateToViewScreen(dynamic product) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ViewProductScreen(product: product),
+      ),
+    ).then((_) => _filterProducts());
+  }
+
   @override
   Widget build(BuildContext context) {
     final formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
@@ -238,7 +249,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                                 columns: [
                                   DataColumn(label: Text('Name/Model', style: TextStyle(fontWeight: FontWeight.bold))),
                                   DataColumn(label: Text('Type', style: TextStyle(fontWeight: FontWeight.bold))),
-                                  DataColumn(label: Text('Brand/Company', style: TextStyle(fontWeight: FontWeight.bold))),
+                                  DataColumn(label: Text('Section', style: TextStyle(fontWeight: FontWeight.bold))),
                                   DataColumn(label: Text('Selling Price', style: TextStyle(fontWeight: FontWeight.bold))),
                                   DataColumn(label: Text('Cost Price', style: TextStyle(fontWeight: FontWeight.bold))),
                                   DataColumn(label: Text('Stock', style: TextStyle(fontWeight: FontWeight.bold))),
@@ -254,12 +265,13 @@ class _ProductListScreenState extends State<ProductListScreen> {
 
                                   return DataRow(
                                     cells: [
-                                      DataCell(Text(name)),
-                                      DataCell(Text(type)),
-                                      DataCell(Text(brandCompany)),
-                                      DataCell(Text(sellingPrice)),
-                                      DataCell(Text(costPrice)),
-                                      DataCell(Text(stock)),
+                                      // --- FIXED: Each DataCell now navigates to ViewProductScreen ---
+                                      DataCell(Text(name), onTap: () => _navigateToViewScreen(product)),
+                                      DataCell(Text(type), onTap: () => _navigateToViewScreen(product)),
+                                      DataCell(Text(brandCompany), onTap: () => _navigateToViewScreen(product)),
+                                      DataCell(Text(sellingPrice), onTap: () => _navigateToViewScreen(product)),
+                                      DataCell(Text(costPrice), onTap: () => _navigateToViewScreen(product)),
+                                      DataCell(Text(stock), onTap: () => _navigateToViewScreen(product)),
                                       DataCell(
                                         Row(
                                           mainAxisSize: MainAxisSize.min,
