@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
@@ -18,13 +19,13 @@ class BillingScreen extends StatefulWidget {
   State<BillingScreen> createState() => _BillingScreenState();
 }
 
-class _BillingScreenState extends State<BillingScreen> {
+class _BillingScreenState extends State<BillingScreen>
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   final ProductService _productService = ProductService();
   final InvoiceService _invoiceService = InvoiceService();
   final TextEditingController _customerNameController = TextEditingController();
   final TextEditingController _customerContactController = TextEditingController();
   final TextEditingController _billDiscountController = TextEditingController();
-  // Add new controllers for eye prescription fields
   final TextEditingController _rightEyeDVController = TextEditingController();
   final TextEditingController _rightEyeNVController = TextEditingController();
   final TextEditingController _leftEyeDVController = TextEditingController();
@@ -40,44 +41,32 @@ class _BillingScreenState extends State<BillingScreen> {
   double _totalAmount = 0.0;
   double _totalProfit = 0.0;
 
-  final List<String> _paymentMethods = ['Cash', 'Card', 'UPI', 'Bank Transfer', 'Other'];
+  bool _isInitialized = false;
+  bool _isSaving = false;
+  Timer? _calculationDebounce;
+
+  static const List<String> _paymentMethods = ['Cash', 'UPI', 'CARD', 'Bank Transfer', 'Other'];
+  static final NumberFormat _formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
+  static final DateFormat _formatDate = DateFormat('dd-MM-yyyy HH:mm');
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    _billDiscountController.addListener(_calculateTotals);
+    WidgetsBinding.instance.addObserver(this);
+    _billDiscountController.addListener(_onDiscountChanged);
     _initializeBillingSession();
   }
 
-  void _initializeBillingSession() async {
-    if (widget.invoiceToEdit != null) {
-      _editingInvoiceId = widget.invoiceToEdit!.invoiceId;
-      _customerNameController.text = widget.invoiceToEdit!.customerName ?? '';
-      _customerContactController.text = widget.invoiceToEdit!.customerContact ?? '';
-      _selectedPaymentMethod = widget.invoiceToEdit!.paymentMethod;
-      _billDiscountController.text = (widget.invoiceToEdit!.totalDiscountOnBill ?? 0.0).toStringAsFixed(2);
-      _currentItems = List.from(widget.invoiceToEdit!.items);
-      // Initialize new eye prescription fields
-      _rightEyeDVController.text = widget.invoiceToEdit!.rightEyeDV ?? '';
-      _rightEyeNVController.text = widget.invoiceToEdit!.rightEyeNV ?? '';
-      _leftEyeDVController.text = widget.invoiceToEdit!.leftEyeDV ?? '';
-      _leftEyeNVController.text = widget.invoiceToEdit!.leftEyeNV ?? '';
-      _noteController.text = widget.invoiceToEdit!.note ?? '';
-
-      // Restore stock when editing (add back the quantities that were sold)
-      for (var item in widget.invoiceToEdit!.items) {
-        await _productService.increaseStock(item.productId, item.productType, item.quantity);
-      }
-    }
-    _calculateTotals();
-  }
-  
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _calculationDebounce?.cancel();
     _customerNameController.dispose();
     _customerContactController.dispose();
     _billDiscountController.dispose();
-    // Dispose new controllers
     _rightEyeDVController.dispose();
     _rightEyeNVController.dispose();
     _leftEyeDVController.dispose();
@@ -86,13 +75,76 @@ class _BillingScreenState extends State<BillingScreen> {
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused && !_isSaving) {
+      // Auto-save draft when app is paused
+      _saveDraft();
+    }
+  }
+
+  void _saveDraft() {
+    // Save current state as draft - implement based on your requirements
+    debugPrint('Auto-saving draft...');
+  }
+
+  void _onDiscountChanged() {
+    _calculationDebounce?.cancel();
+    _calculationDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _calculateTotals();
+      }
+    });
+  }
+
+  Future<void> _initializeBillingSession() async {
+    if (_isInitialized) return;
+
+    try {
+      if (widget.invoiceToEdit != null) {
+        await _loadInvoiceForEditing();
+      }
+      _calculateTotals();
+      _isInitialized = true;
+    } catch (e) {
+      debugPrint('Error initializing billing session: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading invoice: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadInvoiceForEditing() async {
+    final invoice = widget.invoiceToEdit!;
+    
+    _editingInvoiceId = invoice.invoiceId;
+    _customerNameController.text = invoice.customerName ?? '';
+    _customerContactController.text = invoice.customerContact ?? '';
+    _selectedPaymentMethod = invoice.paymentMethod;
+    _billDiscountController.text = (invoice.totalDiscountOnBill ?? 0.0).toStringAsFixed(2);
+    _currentItems = List.from(invoice.items);
+    _rightEyeDVController.text = invoice.rightEyeDV ?? '';
+    _rightEyeNVController.text = invoice.rightEyeNV ?? '';
+    _leftEyeDVController.text = invoice.leftEyeDV ?? '';
+    _leftEyeNVController.text = invoice.leftEyeNV ?? '';
+    _noteController.text = invoice.note ?? '';
+
+    // Restore stock when editing (add back the quantities that were sold)
+    for (var item in invoice.items) {
+      await _productService.increaseStock(item.productId, item.productType, item.quantity);
+    }
+  }
+
   void _calculateTotals() {
+    final stopwatch = Stopwatch()..start();
+    
     double currentSubtotal = 0.0;
     double currentTotalProfit = 0.0;
 
     for (var item in _currentItems) {
       currentSubtotal += (item.unitSellingPrice * item.quantity);
-      // If you have per-item discounts, cap them here
       double itemProfit = (item.unitSellingPrice - item.unitCostPrice) * item.quantity;
       currentTotalProfit += itemProfit;
     }
@@ -107,16 +159,23 @@ class _BillingScreenState extends State<BillingScreen> {
     if (finalTotalAmount < 0) finalTotalAmount = 0.0;
     if (finalTotalProfit < 0) finalTotalProfit = 0.0;
 
-    setState(() {
-      _subtotal = currentSubtotal;
-      _totalDiscountOnBill = billDiscount;
-      _totalAmount = finalTotalAmount;
-      _totalProfit = finalTotalProfit;
-    });
+    if (mounted) {
+      setState(() {
+        _subtotal = currentSubtotal;
+        _totalDiscountOnBill = billDiscount;
+        _totalAmount = finalTotalAmount;
+        _totalProfit = finalTotalProfit;
+      });
+    }
+
+    stopwatch.stop();
+    debugPrint('Calculation took: ${stopwatch.elapsedMilliseconds}ms');
   }
 
   void _addItemToInvoice(dynamic product, int quantity) {
-    int existingIndex = _currentItems.indexWhere((item) => item.productId == (product is Frame ? product.id : product.id));
+    int existingIndex = _currentItems.indexWhere(
+      (item) => item.productId == (product is Frame ? product.id : product.id)
+    );
 
     if (existingIndex != -1) {
       setState(() {
@@ -142,160 +201,226 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 
   void _removeItemFromInvoice(int index) {
-    setState(() {
-      _currentItems.removeAt(index);
-    });
-    _calculateTotals();
+    if (index >= 0 && index < _currentItems.length) {
+      setState(() {
+        _currentItems.removeAt(index);
+      });
+      _calculateTotals();
+    }
   }
 
   void _editItemQuantity(int index, int newQuantity) {
-    if (newQuantity <= 0) {
-      _removeItemFromInvoice(index);
-    } else {
-      setState(() {
-        _currentItems[index].quantity = newQuantity;
-      });
+    if (index >= 0 && index < _currentItems.length) {
+      if (newQuantity <= 0) {
+        _removeItemFromInvoice(index);
+      } else {
+        setState(() {
+          _currentItems[index].quantity = newQuantity;
+        });
+        _calculateTotals();
+      }
     }
-    _calculateTotals();
   }
 
   void _editItemPrice(int index, double newPrice) {
-    setState(() {
-      _currentItems[index].unitSellingPrice = newPrice;
-    });
-    _calculateTotals();
-  }
-
-  void _editItemDiscount(int index, double? discount) {
-    setState(() {
-      _currentItems[index].discountAmount = discount;
-    });
-    _calculateTotals();
-  }
-
-  Future<void> _showProductPicker() async {
-    final selectedProduct = await showModalBottomSheet<dynamic>(
-      context: context,
-      isScrollControlled: true,
-      builder: (BuildContext context) {
-        return ProductPicker(productService: _productService);
-      },
-    );
-
-    if (selectedProduct != null) {
-      _addItemToInvoice(selectedProduct, 1);
+    if (index >= 0 && index < _currentItems.length && newPrice >= 0) {
+      setState(() {
+        _currentItems[index].unitSellingPrice = newPrice;
+      });
+      _calculateTotals();
     }
   }
 
-  Future<void> _saveOrUpdateInvoice() async {
-    // Defensive: ensure _currentItems is not empty
+  void _editItemDiscount(int index, double? discount) {
+    if (index >= 0 && index < _currentItems.length) {
+      setState(() {
+        _currentItems[index].discountAmount = discount;
+      });
+      _calculateTotals();
+    }
+  }
+
+  Future<void> _showProductPicker() async {
+    try {
+      final selectedProduct = await showModalBottomSheet<dynamic>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (BuildContext context) {
+          return ProductPicker(productService: _productService);
+        },
+      );
+
+      if (selectedProduct != null) {
+        _addItemToInvoice(selectedProduct, 1);
+      }
+    } catch (e) {
+      debugPrint('Error showing product picker: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading products: $e')),
+        );
+      }
+    }
+  }
+
+  Future<bool> _validateInvoice() async {
     if (_currentItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please add items to the invoice.')),
       );
-      return;
+      return false;
     }
 
-    // Check stock availability before proceeding
+    // Check stock availability
     for (var item in _currentItems) {
       final product = _productService.getProductById(item.productId, item.productType);
       if (product == null || product.stock < item.quantity) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Insufficient stock for ${item.productName}. Available: ${product?.stock ?? 0}')),
+          SnackBar(
+            content: Text(
+              'Insufficient stock for ${item.productName}. Available: ${product?.stock ?? 0}'
+            ),
+          ),
         );
-        return;
+        return false;
       }
     }
 
-    // Defensive: treat empty discount as 0.0
-    double billDiscount = double.tryParse(_billDiscountController.text) ?? 0.0;
-    if (billDiscount < 0) billDiscount = 0.0;
-    if (billDiscount > _subtotal) billDiscount = _subtotal;
+    return true;
+  }
 
-    final invoice = Invoice(
-      invoiceId: _editingInvoiceId,
-      saleDate: widget.invoiceToEdit?.saleDate ?? DateTime.now(),
-      items: List.from(_currentItems), // Defensive copy
-      customerName: _customerNameController.text.trim().isEmpty
-          ? null
-          : _customerNameController.text.trim(),
-      customerContact: _customerContactController.text.trim().isEmpty
-          ? null
-          : _customerContactController.text.trim(),
-      paymentMethod: _selectedPaymentMethod,
-      totalDiscountOnBill: billDiscount > 0 ? billDiscount : null,
-      // Add new fields
-      rightEyeDV: _rightEyeDVController.text.trim().isEmpty
-          ? null
-          : _rightEyeDVController.text.trim(),
-      rightEyeNV: _rightEyeNVController.text.trim().isEmpty
-          ? null
-          : _rightEyeNVController.text.trim(),
-      leftEyeDV: _leftEyeDVController.text.trim().isEmpty
-          ? null
-          : _leftEyeDVController.text.trim(),
-      leftEyeNV: _leftEyeNVController.text.trim().isEmpty
-          ? null
-          : _leftEyeNVController.text.trim(),
-      note: _noteController.text.trim().isEmpty
-          ? null
-          : _noteController.text.trim(),
-    );
+  Future<void> _saveOrUpdateInvoice() async {
+    if (_isSaving) return;
+
+    setState(() {
+      _isSaving = true;
+    });
 
     try {
+      if (!await _validateInvoice()) {
+        return;
+      }
+
+      double billDiscount = double.tryParse(_billDiscountController.text) ?? 0.0;
+      if (billDiscount < 0) billDiscount = 0.0;
+      if (billDiscount > _subtotal) billDiscount = _subtotal;
+
+      final invoice = Invoice(
+        invoiceId: _editingInvoiceId,
+        saleDate: widget.invoiceToEdit?.saleDate ?? DateTime.now(),
+        items: List.from(_currentItems),
+        customerName: _customerNameController.text.trim().isEmpty
+            ? null
+            : _customerNameController.text.trim(),
+        customerContact: _customerContactController.text.trim().isEmpty
+            ? null
+            : _customerContactController.text.trim(),
+        paymentMethod: _selectedPaymentMethod,
+        totalDiscountOnBill: billDiscount > 0 ? billDiscount : null,
+        rightEyeDV: _rightEyeDVController.text.trim().isEmpty
+            ? null
+            : _rightEyeDVController.text.trim(),
+        rightEyeNV: _rightEyeNVController.text.trim().isEmpty
+            ? null
+            : _rightEyeNVController.text.trim(),
+        leftEyeDV: _leftEyeDVController.text.trim().isEmpty
+            ? null
+            : _leftEyeDVController.text.trim(),
+        leftEyeNV: _leftEyeNVController.text.trim().isEmpty
+            ? null
+            : _leftEyeNVController.text.trim(),
+        note: _noteController.text.trim().isEmpty
+            ? null
+            : _noteController.text.trim(),
+      );
+
       if (_editingInvoiceId != null) {
-        // For editing: stock was already restored in initState, now just decrease for new quantities
-        for (var item in _currentItems) {
-          await _productService.decreaseStock(item.productId, item.productType, item.quantity);
-        }
-        await _invoiceService.updateInvoice(invoice);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invoice updated successfully!')),
-        );
+        await _updateExistingInvoice(invoice);
       } else {
-        // Decrease stock for new invoice items
-        for (var item in _currentItems) {
-          await _productService.decreaseStock(item.productId, item.productType, item.quantity);
-        }
-        await _invoiceService.addInvoice(invoice);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invoice saved successfully!')),
-        );
+        await _createNewInvoice(invoice);
       }
 
       if (mounted) {
         await _showPdfGenerationDialog(invoice);
       }
 
-      // Only clear after successful save and only for new invoice
-      if (_editingInvoiceId == null) {
-        setState(() {
-          _currentItems.clear();
-          _customerNameController.clear();
-          _customerContactController.clear();
-          _billDiscountController.clear();
-          _selectedPaymentMethod = 'Cash';
-        });
-        _calculateTotals();
-      } else {
-        if (mounted && Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
-      }
+      _handlePostSaveActions();
     } catch (e) {
-      print('Error saving/updating invoice: $e');
+      debugPrint('Error saving/updating invoice: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving/updating invoice: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateExistingInvoice(Invoice invoice) async {
+    // For editing: stock was already restored in initState, now just decrease for new quantities
+    for (var item in _currentItems) {
+      await _productService.decreaseStock(item.productId, item.productType, item.quantity);
+    }
+    await _invoiceService.updateInvoice(invoice);
+    
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error saving/updating invoice: $e')),
+        const SnackBar(content: Text('Invoice updated successfully!')),
       );
     }
   }
 
-  // Handle back navigation for editing mode
+  Future<void> _createNewInvoice(Invoice invoice) async {
+    // Decrease stock for new invoice items
+    for (var item in _currentItems) {
+      await _productService.decreaseStock(item.productId, item.productType, item.quantity);
+    }
+    await _invoiceService.addInvoice(invoice);
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invoice saved successfully!')),
+      );
+    }
+  }
+
+  void _handlePostSaveActions() {
+    if (_editingInvoiceId == null) {
+      // Clear form for new invoice
+      _clearForm();
+    } else {
+      // Navigate back for edited invoice
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  void _clearForm() {
+    setState(() {
+      _currentItems.clear();
+      _customerNameController.clear();
+      _customerContactController.clear();
+      _billDiscountController.clear();
+      _rightEyeDVController.clear();
+      _rightEyeNVController.clear();
+      _leftEyeDVController.clear();
+      _leftEyeNVController.clear();
+      _noteController.clear();
+      _selectedPaymentMethod = 'Cash';
+    });
+    _calculateTotals();
+  }
+
   Future<bool> _onWillPop() async {
     if (_editingInvoiceId != null) {
-      // If editing, we need to restore the original stock state
-      // First, restore current edit state (increase stock back)
-      // This is already done, but we need to decrease back to original quantities
+      // If editing, restore the original stock state
       for (var item in widget.invoiceToEdit!.items) {
         await _productService.decreaseStock(item.productId, item.productType, item.quantity);
       }
@@ -306,6 +431,7 @@ class _BillingScreenState extends State<BillingScreen> {
   Future<void> _showPdfGenerationDialog(Invoice invoice) async {
     return showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('Invoice Saved!'),
@@ -313,25 +439,13 @@ class _BillingScreenState extends State<BillingScreen> {
           actions: <Widget>[
             TextButton(
               child: const Text('No, Thanks'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+              onPressed: () => Navigator.of(context).pop(),
             ),
             ElevatedButton(
               child: const Text('Generate PDF'),
               onPressed: () async {
                 Navigator.of(context).pop();
-                try {
-                  final pdfBytes = await PdfGenerator.generateInvoicePdf(invoice);
-                  await PdfGenerator.printAndSharePdf(pdfBytes, 'OptiBill_Invoice_${invoice.invoiceId.substring(0, 8)}.pdf');
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('PDF generated and ready to share!')),
-                  );
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error generating PDF: $e')),
-                  );
-                }
+                await _generateAndSharePdf(invoice);
               },
             ),
           ],
@@ -340,32 +454,67 @@ class _BillingScreenState extends State<BillingScreen> {
     );
   }
 
+  Future<void> _generateAndSharePdf(Invoice invoice) async {
+    try {
+      final pdfBytes = await PdfGenerator.generateInvoicePdf(invoice);
+      await PdfGenerator.printAndSharePdf(
+        pdfBytes,
+        'OptiBill_Invoice_${invoice.invoiceId.substring(0, 8)}.pdf'
+      );
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('PDF generated and ready to share!')),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error generating PDF: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error generating PDF: $e')),
+        );
+      }
+    }
+  }
+
   void _confirmDeleteInvoice(BuildContext context, Invoice invoice) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('Confirm Delete Invoice'),
-          content: Text('Are you sure you want to delete invoice ${invoice.invoiceId.substring(0, 8).toUpperCase()}? This action cannot be undone.'),
+          content: Text(
+            'Are you sure you want to delete invoice ${invoice.invoiceId.substring(0, 8).toUpperCase()}? This action cannot be undone.'
+          ),
           actions: <Widget>[
             TextButton(
               child: const Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+              onPressed: () => Navigator.of(context).pop(),
             ),
             TextButton(
               child: const Text('Delete', style: TextStyle(color: Colors.red)),
               onPressed: () async {
-                // Restore stock for all items in the invoice
-                for (var item in invoice.items) {
-                  await _productService.increaseStock(item.productId, item.productType, item.quantity);
+                try {
+                  // Restore stock for all items in the invoice
+                  for (var item in invoice.items) {
+                    await _productService.increaseStock(item.productId, item.productType, item.quantity);
+                  }
+                  await _invoiceService.deleteInvoice(invoice.invoiceId);
+                  Navigator.of(context).pop();
+                  
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Invoice deleted successfully!')),
+                    );
+                  }
+                } catch (e) {
+                  Navigator.of(context).pop();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error deleting invoice: $e')),
+                    );
+                  }
                 }
-                await _invoiceService.deleteInvoice(invoice.invoiceId);
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Invoice deleted successfully!')),
-                );
               },
             ),
           ],
@@ -376,106 +525,138 @@ class _BillingScreenState extends State<BillingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
-    final formatDate = DateFormat('dd-MM-yyyy HH:mm');
+    super.build(context);
+    debugPrint('BillingScreen building...');
 
-    return WillPopScope(
-      onWillPop: _onWillPop,
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (!didPop) {
+          final shouldPop = await _onWillPop();
+          if (shouldPop && mounted) {
+            Navigator.of(context).pop();
+          }
+        }
+      },
       child: Scaffold(
         appBar: _editingInvoiceId != null 
           ? AppBar(
-              title: Text('Edit Invoice'),
+              title: const Text('Edit Invoice'),
               leading: IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () async {
-                  await _onWillPop();
-                  Navigator.of(context).pop();
+                  final shouldPop = await _onWillPop();
+                  if (shouldPop && mounted) {
+                    Navigator.of(context).pop();
+                  }
                 },
               ),
               backgroundColor: Colors.blue,
               foregroundColor: Colors.white,
+              elevation: 2,
             )
           : null,
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              Expanded(
-                child: ListView(
-                  children: [
-                    _CustomerDetailsCard(
-                      customerNameController: _customerNameController,
-                      customerContactController: _customerContactController,
-                      selectedPaymentMethod: _selectedPaymentMethod,
-                      paymentMethods: _paymentMethods,
-                      onPaymentMethodChanged: (newValue) {
-                        setState(() {
-                          _selectedPaymentMethod = newValue!;
-                        });
-                      },
-                      // Pass new controllers
-                      rightEyeDVController: _rightEyeDVController,
-                      rightEyeNVController: _rightEyeNVController,
-                      leftEyeDVController: _leftEyeDVController,
-                      leftEyeNVController: _leftEyeNVController,
-                      noteController: _noteController,
-                    ),
-                    _ItemsSectionCard(
-                      currentItems: _currentItems,
-                      editingInvoiceId: _editingInvoiceId,
-                      formatCurrency: formatCurrency,
-                      showProductPicker: _showProductPicker,
-                      removeItemFromInvoice: _removeItemFromInvoice,
-                      editItemPrice: _editItemPrice,
-                      editItemQuantity: _editItemQuantity,
-                      editItemDiscount: _editItemDiscount,
-                    ),
-                    _BillSummaryCard(
-                      subtotal: _subtotal,
-                      billDiscountController: _billDiscountController,
-                      totalAmount: _totalAmount,
-                      totalProfit: _totalProfit,
-                      formatCurrency: formatCurrency,
-                    ),
-                    if (_editingInvoiceId == null)
-                      _RecentInvoicesCard(
-                        formatDate: formatDate,
-                        formatCurrency: formatCurrency,
-                        confirmDeleteInvoice: _confirmDeleteInvoice,
-                      ),
-                  ],
-                ),
+        body: _isSaving
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Saving invoice...'),
+                ],
               ),
-              SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: _saveOrUpdateInvoice,
-                icon: Icon(_editingInvoiceId != null ? Icons.save : Icons.add),
-                label: Text(_editingInvoiceId != null ? 'Update Invoice' : 'Save Invoice'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 30),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
-                  textStyle: const TextStyle(fontSize: 20),
-                ),
+            )
+          : _buildBody(),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        children: [
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                await _initializeBillingSession();
+              },
+              child: ListView(
+                children: [
+                  _CustomerDetailsCard(
+                    customerNameController: _customerNameController,
+                    customerContactController: _customerContactController,
+                    selectedPaymentMethod: _selectedPaymentMethod,
+                    paymentMethods: _paymentMethods,
+                    onPaymentMethodChanged: (newValue) {
+                      setState(() {
+                        _selectedPaymentMethod = newValue!;
+                      });
+                    },
+                    rightEyeDVController: _rightEyeDVController,
+                    rightEyeNVController: _rightEyeNVController,
+                    leftEyeDVController: _leftEyeDVController,
+                    leftEyeNVController: _leftEyeNVController,
+                    noteController: _noteController,
+                  ),
+                  _ItemsSectionCard(
+                    currentItems: _currentItems,
+                    editingInvoiceId: _editingInvoiceId,
+                    formatCurrency: _formatCurrency,
+                    showProductPicker: _showProductPicker,
+                    removeItemFromInvoice: _removeItemFromInvoice,
+                    editItemPrice: _editItemPrice,
+                    editItemQuantity: _editItemQuantity,
+                    editItemDiscount: _editItemDiscount,
+                  ),
+                  _BillSummaryCard(
+                    subtotal: _subtotal,
+                    billDiscountController: _billDiscountController,
+                    totalAmount: _totalAmount,
+                    totalProfit: _totalProfit,
+                    formatCurrency: _formatCurrency,
+                  ),
+                  if (_editingInvoiceId == null)
+                    _RecentInvoicesCard(
+                      formatDate: _formatDate,
+                      formatCurrency: _formatCurrency,
+                      confirmDeleteInvoice: _confirmDeleteInvoice,
+                    ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isSaving ? null : _saveOrUpdateInvoice,
+              icon: Icon(_editingInvoiceId != null ? Icons.save : Icons.add),
+              label: Text(_editingInvoiceId != null ? 'Update Invoice' : 'Save Invoice'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 30),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                elevation: 3,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-// Extracted Widgets for better readability and compactness
-
+// Optimized Customer Details Card
 class _CustomerDetailsCard extends StatelessWidget {
   final TextEditingController customerNameController;
   final TextEditingController customerContactController;
   final String selectedPaymentMethod;
   final List<String> paymentMethods;
   final ValueChanged<String?> onPaymentMethodChanged;
-  // Add new controllers
   final TextEditingController rightEyeDVController;
   final TextEditingController rightEyeNVController;
   final TextEditingController leftEyeDVController;
@@ -506,96 +687,89 @@ class _CustomerDetailsCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Customer Details', style: Theme.of(context).textTheme.titleLarge),
-            SizedBox(height: 10),
-            TextField(
-              controller: customerNameController,
-              decoration: InputDecoration(
-                labelText: 'Customer Name (Optional)',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-              ),
+            Row(
+              children: [
+                const Icon(Icons.person, color: Colors.blue),
+                const SizedBox(width: 8),
+                Text('Customer Details', style: Theme.of(context).textTheme.titleLarge),
+              ],
             ),
-            SizedBox(height: 10),
-            TextField(
+            const SizedBox(height: 16),
+            _buildTextField(
+              controller: customerNameController,
+              labelText: 'Customer Name (Optional)',
+              prefixIcon: Icons.person_outline,
+            ),
+            const SizedBox(height: 12),
+            _buildTextField(
               controller: customerContactController,
-              decoration: InputDecoration(
-                labelText: 'Customer Contact (Optional)',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-              ),
+              labelText: 'Customer Contact (Optional)',
+              prefixIcon: Icons.phone,
               keyboardType: TextInputType.phone,
             ),
-            SizedBox(height: 10),
-            // New fields for eye prescription
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: rightEyeDVController,
-                    decoration: InputDecoration(
-                      labelText: 'Right Eye DV',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                      contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-                    ),
-                  ),
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: rightEyeNVController,
-                    decoration: InputDecoration(
-                      labelText: 'Right Eye NV',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                      contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: leftEyeDVController,
-                    decoration: InputDecoration(
-                      labelText: 'Left Eye DV',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                      contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-                    ),
-                  ),
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: leftEyeNVController,
-                    decoration: InputDecoration(
-                      labelText: 'Left Eye NV',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                      contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: noteController,
-              decoration: InputDecoration(
-                labelText: 'note(Optional)',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+            const SizedBox(height: 16),
+            Text(
+              'Eye Prescription',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Colors.blue.shade700,
+                fontWeight: FontWeight.w600,
               ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildTextField(
+                    controller: rightEyeDVController,
+                    labelText: 'Right DV',
+                    prefixIcon: Icons.remove_red_eye,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTextField(
+                    controller: rightEyeNVController,
+                    labelText: 'Right NV',
+                    prefixIcon: Icons.remove_red_eye_outlined,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildTextField(
+                    controller: leftEyeDVController,
+                    labelText: 'Left DV',
+                    prefixIcon: Icons.remove_red_eye,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTextField(
+                    controller: leftEyeNVController,
+                    labelText: 'Left NV',
+                    prefixIcon: Icons.remove_red_eye_outlined,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildTextField(
+              controller: noteController,
+              labelText: 'Note (Optional)',
+              prefixIcon: Icons.note,
               maxLines: 2,
             ),
-            SizedBox(height: 10),
+            const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: selectedPaymentMethod,
               decoration: InputDecoration(
                 labelText: 'Payment Method',
+                prefixIcon: const Icon(Icons.payment),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+                contentPadding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
               ),
               items: paymentMethods.map((String method) {
                 return DropdownMenuItem<String>(
@@ -610,8 +784,29 @@ class _CustomerDetailsCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String labelText,
+    required IconData prefixIcon,
+    TextInputType? keyboardType,
+    int maxLines = 1,
+  }) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        labelText: labelText,
+        prefixIcon: Icon(prefixIcon),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+        contentPadding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
+      ),
+      keyboardType: keyboardType,
+      maxLines: maxLines,
+    );
+  }
 }
 
+// Optimized Items Section Card
 class _ItemsSectionCard extends StatelessWidget {
   final List<InvoiceItem> currentItems;
   final String? editingInvoiceId;
@@ -647,112 +842,218 @@ class _ItemsSectionCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Items', style: Theme.of(context).textTheme.titleLarge),
+                Row(
+                  children: [
+                    const Icon(Icons.shopping_cart, color: Colors.green),
+                    const SizedBox(width: 8),
+                    Text('Items (${currentItems.length})', style: Theme.of(context).textTheme.titleLarge),
+                  ],
+                ),
                 ElevatedButton.icon(
                   onPressed: showProductPicker,
-                  icon: const Icon(Icons.add_shopping_cart),
+                  icon: const Icon(Icons.add_shopping_cart, size: 18),
                   label: const Text('Add Product'),
                   style: ElevatedButton.styleFrom(
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   ),
                 ),
               ],
             ),
-            SizedBox(height: 10),
+            const SizedBox(height: 16),
             currentItems.isEmpty
-                ? const Center(child: Text('No items added yet.'))
-                : ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: currentItems.length,
-              itemBuilder: (context, index) {
-                final item = currentItems[index];
-                return Card(
-                  margin: const EdgeInsets.symmetric(vertical: 4.0),
-                  elevation: 1,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
+                ? Center(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        Icon(Icons.shopping_cart_outlined, size: 48, color: Colors.grey.shade400),
+                        const SizedBox(height: 8),
+                        Text(
+                          'No items added yet.',
+                          style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
+                        ),
+                        const SizedBox(height: 8),
+                        TextButton.icon(
+                          onPressed: showProductPicker,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add your first product'),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: currentItems.length,
+                    itemBuilder: (context, index) {
+                      final item = currentItems[index];
+                      return _buildItemCard(item, index, context);
+                    },
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItemCard(InvoiceItem item, int index, BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4.0),
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.productName,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: item.productType == 'Frame' ? Colors.blue.shade100 : Colors.green.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          item.productType,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: item.productType == 'Frame' ? Colors.blue.shade800 : Colors.green.shade800,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                  onPressed: () => removeItemFromInvoice(index),
+                  tooltip: 'Remove item',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Unit Price', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      Container(
+                        height: 36,
+                        child: TextFormField(
+                          initialValue: item.unitSellingPrice.toStringAsFixed(2),
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) {
+                            double? newPrice = double.tryParse(value);
+                            if (newPrice != null && newPrice >= 0) {
+                              editItemPrice(index, newPrice);
+                            }
+                          },
+                          decoration: InputDecoration(
+                            prefixText: '₹ ',
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Quantity', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      Container(
+                        height: 36,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
                           children: [
+                            InkWell(
+                              onTap: () {
+                                if (item.quantity > 1) {
+                                  editItemQuantity(index, item.quantity - 1);
+                                }
+                              },
+                              child: Container(
+                                width: 32,
+                                height: 36,
+                                child: const Icon(Icons.remove, size: 16),
+                              ),
+                            ),
                             Expanded(
-                              child: Text(
-                                '${item.productName} (${item.productType})',
-                                style: const TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => removeItemFromInvoice(index),
-                            ),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            Text('Unit Price: '),
-                            SizedBox(
-                              width: 80,
                               child: TextFormField(
-                                initialValue: item.unitSellingPrice.toStringAsFixed(2),
-                                keyboardType: TextInputType.number,
-                                onChanged: (value) {
-                                  double? newPrice = double.tryParse(value);
-                                  if (newPrice != null) {
-                                    editItemPrice(index, newPrice);
-                                  }
-                                },
-                                textAlign: TextAlign.center,
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  border: UnderlineInputBorder(),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            const Text('Qty: '),
-                            SizedBox(
-                              width: 50,
-                              child: TextFormField(
+                                key: ValueKey('${item.productId}_${item.quantity}'),
                                 initialValue: item.quantity.toString(),
                                 keyboardType: TextInputType.number,
                                 onChanged: (value) {
                                   int? newQty = int.tryParse(value);
-                                  if (newQty != null) {
+                                  if (newQty != null && newQty > 0) {
                                     editItemQuantity(index, newQty);
                                   }
                                 },
                                 textAlign: TextAlign.center,
                                 decoration: const InputDecoration(
+                                  border: InputBorder.none,
                                   isDense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  border: UnderlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(vertical: 8),
                                 ),
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () => editItemQuantity(index, item.quantity + 1),
+                              child: Container(
+                                width: 32,
+                                height: 36,
+                                child: const Icon(Icons.add, size: 16),
                               ),
                             ),
                           ],
                         ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Text(
-                            'Item Total: ${formatCurrency.format(item.totalSellingPrice)}',
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                );
-              },
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      const Text('Total', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      Text(
+                        formatCurrency.format(item.totalSellingPrice),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -761,6 +1062,7 @@ class _ItemsSectionCard extends StatelessWidget {
   }
 }
 
+// Optimized Bill Summary Card
 class _BillSummaryCard extends StatelessWidget {
   final double subtotal;
   final TextEditingController billDiscountController;
@@ -787,61 +1089,87 @@ class _BillSummaryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Bill Summary', style: Theme.of(context).textTheme.titleLarge),
-            SizedBox(height: 10),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Subtotal:'),
-                Text(formatCurrency.format(subtotal)),
+                const Icon(Icons.receipt, color: Colors.orange),
+                const SizedBox(width: 8),
+                Text('Bill Summary', style: Theme.of(context).textTheme.titleLarge),
               ],
             ),
-            SizedBox(height: 10),
-            TextField(
-              controller: billDiscountController,
-              decoration: InputDecoration(
-                labelText: 'Total Bill Discount (₹)',
-                hintText: 'Max: ${formatCurrency.format(subtotal)}',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade200),
               ),
-              keyboardType: TextInputType.number,
-            ),
-            SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Total Amount:',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-                ),
-                Text(
-                  formatCurrency.format(totalAmount),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.blue),
-                ),
-              ],
-            ),
-            SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Estimated Profit:',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                Text(
-                  formatCurrency.format(totalProfit),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green),
-                ),
-              ],
+              child: Column(
+                children: [
+                  _buildSummaryRow('Subtotal:', formatCurrency.format(subtotal), false),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: billDiscountController,
+                    decoration: InputDecoration(
+                      labelText: 'Bill Discount',
+                      hintText: 'Max: ${formatCurrency.format(subtotal)}',
+                      prefixIcon: const Icon(Icons.discount),
+                      prefixText: '₹ ',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 16.0),
+                    ),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow(
+                    'Total Amount:',
+                    formatCurrency.format(totalAmount),
+                    true,
+                    valueColor: Colors.blue,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSummaryRow(
+                    'Estimated Profit:',
+                    formatCurrency.format(totalProfit),
+                    false,
+                    valueColor: Colors.green,
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
   }
+
+  Widget _buildSummaryRow(String label, String value, bool isTotal, {Color? valueColor}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
+            fontSize: isTotal ? 18 : 16,
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: isTotal ? 20 : 16,
+            color: valueColor ?? Colors.black,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
+// Optimized Recent Invoices Card
 class _RecentInvoicesCard extends StatelessWidget {
   final DateFormat formatDate;
   final NumberFormat formatCurrency;
@@ -864,14 +1192,34 @@ class _RecentInvoicesCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Recent Invoices', style: Theme.of(context).textTheme.titleLarge),
-            SizedBox(height: 10),
-            ValueListenableBuilder(
-              valueListenable: Hive.box<Invoice>('invoices').listenable(),
-              builder: (context, Box<Invoice> box, _) {
+            Row(
+              children: [
+                const Icon(Icons.history, color: Colors.purple),
+                const SizedBox(width: 8),
+                Text('Recent Invoices', style: Theme.of(context).textTheme.titleLarge),
+              ],
+            ),
+            const SizedBox(height: 16),
+            StreamBuilder(
+              stream: Hive.box<Invoice>('invoices').watch(),
+              builder: (context, snapshot) {
+                final box = Hive.box<Invoice>('invoices');
+                
                 if (box.isEmpty) {
-                  return const Center(child: Text('No invoices saved yet.'));
+                  return Center(
+                    child: Column(
+                      children: [
+                        Icon(Icons.receipt_outlined, size: 48, color: Colors.grey.shade400),
+                        const SizedBox(height: 8),
+                        Text(
+                          'No invoices saved yet.',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  );
                 }
+
                 final recentInvoices = box.values.toList()
                   ..sort((a, b) => b.saleDate.compareTo(a.saleDate));
                 final displayInvoices = recentInvoices.take(5).toList();
@@ -882,40 +1230,7 @@ class _RecentInvoicesCard extends StatelessWidget {
                   itemCount: displayInvoices.length,
                   itemBuilder: (context, index) {
                     final invoice = displayInvoices[index];
-                    return Card(
-                      margin: const EdgeInsets.symmetric(vertical: 4.0),
-                      elevation: 1,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
-                      child: ListTile(
-                        title: Text('Invoice ID: ${invoice.invoiceId.substring(0, 8).toUpperCase()}'),
-                        subtitle: Text(
-                          '${formatDate.format(invoice.saleDate)} : ${formatCurrency.format(invoice.totalAmount)}',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit, color: Colors.blue),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => BillingScreen(invoiceToEdit: invoice),
-                                  ),
-                                ).then((value) {
-                                  // This callback runs when the BillingScreen is popped
-                                  // ValueListenableBuilder will automatically update.
-                                });
-                              },
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => confirmDeleteInvoice(context, invoice),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
+                    return _buildInvoiceCard(invoice, context);
                   },
                 );
               },
@@ -925,9 +1240,70 @@ class _RecentInvoicesCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildInvoiceCard(Invoice invoice, BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4.0),
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: Colors.blue.shade100,
+          child: Text(
+            invoice.invoiceId.substring(0, 2).toUpperCase(),
+            style: TextStyle(
+              color: Colors.blue.shade800,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+        ),
+        title: Text(
+          'Invoice #${invoice.invoiceId.substring(0, 8).toUpperCase()}',
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(formatDate.format(invoice.saleDate)),
+            Text(
+              formatCurrency.format(invoice.totalAmount),
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.green,
+              ),
+            ),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => BillingScreen(invoiceToEdit: invoice),
+                  ),
+                );
+              },
+              tooltip: 'Edit invoice',
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+              onPressed: () => confirmDeleteInvoice(context, invoice),
+              tooltip: 'Delete invoice',
+            ),
+          ],
+        ),
+        isThreeLine: true,
+      ),
+    );
+  }
 }
 
-// Product Picker Modal Bottom Sheet (remains unchanged)
+// Optimized Product Picker
 class ProductPicker extends StatefulWidget {
   final ProductService productService;
 
@@ -937,82 +1313,106 @@ class ProductPicker extends StatefulWidget {
   State<ProductPicker> createState() => _ProductPickerState();
 }
 
-class _ProductPickerState extends State<ProductPicker> {
+class _ProductPickerState extends State<ProductPicker> with AutomaticKeepAliveClientMixin {
   String _selectedCategory = 'All';
   String _selectedSubCategory = 'All';
-  TextEditingController _searchController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
   List<dynamic> _filteredProducts = [];
+  List<dynamic> _allProducts = [];
+  Timer? _searchDebounce;
+  bool _isInitialized = false;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_filterProducts);
-    _filterProducts();
+    _initializeData();
+    _searchController.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
 
+  void _initializeData() {
+    if (!_isInitialized) {
+      _allProducts = widget.productService.getAllProducts();
+      _filterProducts();
+      _isInitialized = true;
+    }
+  }
+
+  void _onSearchChanged() {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _filterProducts();
+      }
+    });
+  }
+
   void _filterProducts() {
+    List<dynamic> tempProducts = _allProducts;
+
+    // Filter by category
+    if (_selectedCategory == 'Frame') {
+      tempProducts = tempProducts.whereType<Frame>().toList();
+    } else if (_selectedCategory == 'Lens') {
+      tempProducts = tempProducts.whereType<Lens>().toList();
+    }
+
+    // Filter by sub-category
+    if (_selectedSubCategory != 'All') {
+      tempProducts = tempProducts.where((product) {
+        if (product is Frame) {
+          return product.brand == _selectedSubCategory;
+        } else if (product is Lens) {
+          return product.company == _selectedSubCategory;
+        }
+        return false;
+      }).toList();
+    }
+
+    // Filter by search query
+    final query = _searchController.text.toLowerCase();
+    if (query.isNotEmpty) {
+      tempProducts = tempProducts.where((product) {
+        if (product is Frame) {
+          return product.modelName.toLowerCase().contains(query);
+        } else if (product is Lens) {
+          return product.name.toLowerCase().contains(query);
+        }
+        return false;
+      }).toList();
+    }
+
     setState(() {
-      List<dynamic> allProducts = widget.productService.getAllProducts();
-      List<dynamic> tempProducts = [];
-
-      if (_selectedCategory == 'Frame') {
-        tempProducts = allProducts.whereType<Frame>().toList();
-      } else if (_selectedCategory == 'Lens') {
-        tempProducts = allProducts.whereType<Lens>().toList();
-      } else {
-        tempProducts = allProducts;
-      }
-
-      if (_selectedSubCategory != 'All') {
-        tempProducts = tempProducts.where((product) {
-          if (product is Frame) {
-            return product.brand == _selectedSubCategory;
-          } else if (product is Lens) {
-            return product.company == _selectedSubCategory;
-          }
-          return false;
-        }).toList();
-      }
-
-      if (_searchController.text.isNotEmpty) {
-        final query = _searchController.text.toLowerCase();
-        tempProducts = tempProducts.where((product) {
-          if (product is Frame) {
-            return product.modelName.toLowerCase().contains(query);
-          } else if (product is Lens) {
-            return product.name.toLowerCase().contains(query);
-          }
-          return false;
-        }).toList();
-      }
-
       _filteredProducts = tempProducts;
     });
   }
 
   List<String> _getAvailableSubCategories() {
     Set<String> subCategories = {'All'};
-    List<dynamic> products = widget.productService.getAllProducts();
 
     if (_selectedCategory == 'Frame') {
-      for (var product in products.whereType<Frame>()) {
+      for (var product in _allProducts.whereType<Frame>()) {
         subCategories.add(product.brand);
       }
     } else if (_selectedCategory == 'Lens') {
-      for (var product in products.whereType<Lens>()) {
+      for (var product in _allProducts.whereType<Lens>()) {
         subCategories.add(product.company);
       }
     } else {
-      for (var product in products.whereType<Frame>()) {
+      for (var product in _allProducts.whereType<Frame>()) {
         subCategories.add(product.brand);
       }
-      for (var product in products.whereType<Lens>()) {
+      for (var product in _allProducts.whereType<Lens>()) {
         subCategories.add(product.company);
       }
     }
@@ -1021,150 +1421,264 @@ class _ProductPickerState extends State<ProductPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
-
+    super.build(context);
+    
     return Container(
       height: MediaQuery.of(context).size.height * 0.9,
-      padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Select Product', style: Theme.of(context).textTheme.headlineSmall),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.pop(context),
-              ),
-            ],
-          ),
-          SizedBox(height: 16),
-          TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              labelText: 'Search Products',
-              hintText: 'Search by name or model',
-              prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8.0),
-              ),
-              contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Select Product',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue.shade800,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.blue.shade800,
+                  ),
+                ),
+              ],
             ),
           ),
-          SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _selectedCategory,
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _searchController,
                   decoration: InputDecoration(
-                    labelText: 'Category',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                    contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
+                    labelText: 'Search Products',
+                    hintText: 'Search by name or model',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _searchController.clear();
+                              _filterProducts();
+                            },
+                          )
+                        : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12.0),
+                    ),
                   ),
-                  items: <String>['All', 'Frame', 'Lens'].map((String value) {
-                    return DropdownMenuItem<String>(
-                      value: value,
-                      child: Text(value),
-                    );
-                  }).toList(),
-                  onChanged: (String? newValue) {
-                    setState(() {
-                      _selectedCategory = newValue!;
-                      _selectedSubCategory = 'All';
-                      _filterProducts();
-                    });
-                  },
                 ),
-              ),
-              SizedBox(width: 16),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  value: _selectedSubCategory,
-                  decoration: InputDecoration(
-                    labelText: 'Sub-Category',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
-                    contentPadding: EdgeInsets.symmetric(vertical: 10.0, horizontal: 15.0),
-                  ),
-                  items: _getAvailableSubCategories().map((String value) {
-                    return DropdownMenuItem<String>(
-                      value: value,
-                      child: Text(value),
-                    );
-                  }).toList(),
-                  onChanged: (String? newValue) {
-                    setState(() {
-                      _selectedSubCategory = newValue!;
-                      _filterProducts();
-                    });
-                  },
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _selectedCategory,
+                        decoration: InputDecoration(
+                          labelText: 'Category',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                        ),
+                        items: const <String>['All', 'Frame', 'Lens'].map((String value) {
+                          return DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          );
+                        }).toList(),
+                        onChanged: (String? newValue) {
+                          setState(() {
+                            _selectedCategory = newValue!;
+                            _selectedSubCategory = 'All';
+                          });
+                          _filterProducts();
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _selectedSubCategory,
+                        decoration: InputDecoration(
+                          labelText: 'Sub-Category',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.0)),
+                        ),
+                        items: _getAvailableSubCategories().map((String value) {
+                          return DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          );
+                        }).toList(),
+                        onChanged: (String? newValue) {
+                          setState(() {
+                            _selectedSubCategory = newValue!;
+                          });
+                          _filterProducts();
+                        },
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          SizedBox(height: 16),
           Expanded(
-            child: ValueListenableBuilder(
-              valueListenable: Hive.box<Frame>('frames').listenable(),
-              builder: (context, Box<Frame> framesBox, _) {
-                return ValueListenableBuilder(
-                  valueListenable: Hive.box<Lens>('lenses').listenable(),
-                  builder: (context, Box<Lens> lensesBox, _) {
-                    if (_filteredProducts.isEmpty) {
-                      return const Center(child: Text('No products found.'));
-                    }
-                    return ListView.builder(
-                      itemCount: _filteredProducts.length,
-                      itemBuilder: (context, index) {
-                        final product = _filteredProducts[index];
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 8.0),
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.all(16.0),
-                            title: Text(
-                              product is Frame ? product.modelName : product.name,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SizedBox(height: 4),
-                                Text(
-                                  'Type:  ${product is Frame ? 'Frame' : 'Lens'}',
-                                  style: TextStyle(color: Colors.grey[700]),
-                                ),
-                                Text(
-                                  'Brand/Company:  ${product is Frame ? product.brand : product.company}',
-                                  style: TextStyle(color: Colors.grey[700]),
-                                ),
-                                Text(
-                                  'Stock:  ${product.stock}',
-                                  style: TextStyle(color: Colors.orange[700], fontWeight: FontWeight.bold),
-                                ),
-                                Text(
-                                  'Selling Price:  ${formatCurrency.format(product.sellingPrice)}',
-                                  style: TextStyle(color: Colors.green[700], fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.add_circle, color: Colors.blue, size: 30),
-                              onPressed: () {
-                                Navigator.pop(context, product);
-                              },
-                            ),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                );
-              },
-            ),
+            child: _filteredProducts.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.inventory_2_outlined, size: 64, color: Colors.grey.shade400),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No products found.',
+                          style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: _filteredProducts.length,
+                    itemBuilder: (context, index) {
+                      final product = _filteredProducts[index];
+                      return _buildProductCard(product);
+                    },
+                  ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildProductCard(dynamic product) {
+    final String name = product is Frame ? product.modelName : product.name;
+    final String type = product is Frame ? 'Frame' : 'Lens';
+    final String brandCompany = product is Frame ? product.brand : product.company;
+    final double stock = product.stock;
+    final double sellingPrice = product.sellingPrice;
+
+    // Stock color coding
+    Color stockColor = Colors.green;
+    if (stock <= 5) stockColor = Colors.red;
+    else if (stock <= 10) stockColor = Colors.orange;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6.0),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+      child: InkWell(
+        onTap: () => Navigator.pop(context, product),
+        borderRadius: BorderRadius.circular(12.0),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: type == 'Frame' ? Colors.blue.shade100 : Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            type,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: type == 'Frame' ? Colors.blue.shade800 : Colors.green.shade800,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            brandCompany,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: stockColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.inventory, size: 14, color: stockColor),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Stock: ${stock.toInt()}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: stockColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          NumberFormat.currency(locale: 'en_IN', symbol: '₹').format(sellingPrice),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.add_circle, color: Colors.blue, size: 28),
+                  onPressed: () => Navigator.pop(context, product),
+                  tooltip: 'Add to invoice',
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

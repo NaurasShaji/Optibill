@@ -453,7 +453,7 @@ class _BackupRestoreTabState extends State<BackupRestoreTab> {
   }
 }
 
-// --- CustomerLookupTab ---
+
 class CustomerLookupTab extends StatefulWidget {
   const CustomerLookupTab({super.key});
 
@@ -462,325 +462,830 @@ class CustomerLookupTab extends StatefulWidget {
 }
 
 class _CustomerLookupTabState extends State<CustomerLookupTab> {
-  final _customerNameController = TextEditingController();
-  List<Invoice> _foundInvoices = [];
+  // Controllers and state
+  late final TextEditingController _customerNameController;
+  late final ScrollController _scrollController;
+  
+  final List<Invoice> _foundInvoices = [];
+  final List<Invoice> _allCustomers = [];
   Invoice? _selectedInvoice;
   bool _isSearching = false;
-
-  // New: List of all unique customers (latest invoice per customer)
-  List<Invoice> _allCustomers = [];
+  bool _isLoading = true;
+  
+  // Cached formatters for performance
+  late final NumberFormat _currencyFormatter;
+  late final DateFormat _dateFormatter;
+  
+  // Debounce timer for search optimization
+  Timer? _debounceTimer;
+  static const Duration _debounceDuration = Duration(milliseconds: 300);
 
   @override
   void initState() {
     super.initState();
+    _initializeControllers();
+    _initializeFormatters();
     _loadAllCustomers();
+  }
+
+  void _initializeControllers() {
+    _customerNameController = TextEditingController();
+    _scrollController = ScrollController();
+  }
+
+  void _initializeFormatters() {
+    _currencyFormatter = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
+    _dateFormatter = DateFormat('dd-MM-yyyy');
+  }
+
+  Future<void> _loadAllCustomers() async {
+    if (!mounted) return;
+    
+    setState(() => _isLoading = true);
+    
+    try {
+      final invoiceBox = Hive.box<Invoice>('invoices');
+      final Map<String, Invoice> latestInvoicesByCustomer = {};
+      
+      // Process all invoices to find latest per customer
+      for (final invoice in invoiceBox.values) {
+        final customerName = (invoice.customerName?.trim().toLowerCase() ?? '').isEmpty 
+            ? 'unknown' 
+            : invoice.customerName!.trim().toLowerCase();
+        final customerContact = invoice.customerContact?.trim() ?? '';
+        final key = '$customerName|$customerContact';
+
+        if (!latestInvoicesByCustomer.containsKey(key) ||
+            invoice.saleDate.isAfter(latestInvoicesByCustomer[key]!.saleDate)) {
+          latestInvoicesByCustomer[key] = invoice;
+        }
+      }
+
+      // Sort customers by name
+      final sortedCustomers = latestInvoicesByCustomer.values.toList()
+        ..sort((a, b) {
+          final aName = a.customerName?.toLowerCase() ?? '';
+          final bName = b.customerName?.toLowerCase() ?? '';
+          return aName.compareTo(bName);
+        });
+
+      if (mounted) {
+        setState(() {
+          _allCustomers.clear();
+          _allCustomers.addAll(sortedCustomers);
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showErrorSnackBar('Error loading customers: $e');
+      }
+    }
+  }
+
+  void _onSearchChanged(String query) {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(_debounceDuration, () {
+      _searchCustomers(query);
+    });
+  }
+
+  Future<void> _searchCustomers(String query) async {
+    if (!mounted) return;
+    
+    final trimmedQuery = query.trim();
+    
+    if (trimmedQuery.isEmpty) {
+      setState(() {
+        _foundInvoices.clear();
+        _selectedInvoice = null;
+        _isSearching = false;
+      });
+      return;
+    }
+
+    setState(() => _isSearching = true);
+
+    try {
+      final queryLower = trimmedQuery.toLowerCase();
+      final results = _allCustomers
+          .where((invoice) =>
+              (invoice.customerName?.toLowerCase().contains(queryLower) ?? false) ||
+              (invoice.customerContact?.contains(trimmedQuery) ?? false))
+          .take(10)
+          .toList();
+
+      if (mounted) {
+        setState(() {
+          _foundInvoices.clear();
+          _foundInvoices.addAll(results);
+          _isSearching = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSearching = false);
+        _showErrorSnackBar('Error searching customers: $e');
+      }
+    }
+  }
+
+  void _clearSearch() {
+    _customerNameController.clear();
+    setState(() {
+      _foundInvoices.clear();
+      _selectedInvoice = null;
+    });
+  }
+
+  void _selectInvoice(Invoice invoice) {
+    setState(() => _selectedInvoice = invoice);
+    // Smooth scroll to show selected invoice details
+    if (_selectedInvoice != null) {
+      _scrollController.animateTo(
+        400,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red.shade600,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _customerNameController.dispose();
+    _scrollController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadAllCustomers() async {
-    try {
-      final invoiceBox = Hive.box<Invoice>('invoices');
-
-      final Map<String, Invoice> latestInvoicesByCustomer = {};
-      for (final invoice in invoiceBox.values) {
-        final customerName = invoice.customerName?.trim().toLowerCase() ?? '';
-        final customerContact = invoice.customerContact?.trim() ?? '';
-        final key = '$customerName|$customerContact';
-
-        if (!latestInvoicesByCustomer.containsKey(key) ||
-            invoice.saleDate.isAfter(latestInvoicesByCustomer[key]!.saleDate)) {
-          latestInvoicesByCustomer[key] = invoice;
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          _allCustomers = latestInvoicesByCustomer.values.toList()
-            ..sort((a, b) {
-              final aKey = (a.customerName ?? '') + (a.customerContact ?? '');
-              final bKey = (b.customerName ?? '') + (b.customerContact ?? '');
-              return aKey.compareTo(bKey);
-            });
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading all customers: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _searchCustomers(String query) async {
-    if (query.trim().isEmpty) {
-      if (mounted) {
-        setState(() {
-          _foundInvoices = [];
-          _selectedInvoice = null;
-        });
-      }
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _isSearching = true;
-        _selectedInvoice = null;
-      });
-    }
-
-    try {
-      final invoiceBox = Hive.box<Invoice>('invoices');
-      final queryLower = query.trim().toLowerCase();
-
-      final matchingInvoices = invoiceBox.values
-          .where((invoice) =>
-      invoice.customerName?.trim().toLowerCase().startsWith(queryLower) ?? false)
-          .toList();
-
-      final Map<String, Invoice> latestInvoicesByCustomer = {};
-      for (final invoice in matchingInvoices) {
-        final customerName = invoice.customerName?.trim().toLowerCase() ?? '';
-        final customerContact = invoice.customerContact?.trim() ?? '';
-        final key = '$customerName|$customerContact';
-        if (!latestInvoicesByCustomer.containsKey(key) ||
-            invoice.saleDate.isAfter(latestInvoicesByCustomer[key]!.saleDate)) {
-          latestInvoicesByCustomer[key] = invoice;
-        }
-      }
-
-      final results = latestInvoicesByCustomer.values.toList()
-        ..sort((a, b) {
-          final aKey = (a.customerName ?? '') + (a.customerContact ?? '');
-          final bKey = (b.customerName ?? '') + (b.customerContact ?? '');
-          return aKey.compareTo(bKey);
-        });
-
-      if (mounted) {
-        setState(() {
-          _foundInvoices = results;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error searching for customers: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSearching = false;
-        });
-      }
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: ListView(
-        children: [
-          // --- First Card: Search Field and Results ---
-          Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  Text(
-                    'Customer Details Lookup',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _customerNameController,
-                    decoration: InputDecoration(
-                      labelText: 'Customer Name',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.0)),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _customerNameController.clear();
-                          setState(() {
-                            _foundInvoices = [];
-                            _selectedInvoice = null;
-                          });
-                        },
-                      ),
-                    ),
-                    onChanged: _searchCustomers,
-                  ),
-                  const SizedBox(height: 12),
-                  if (_isSearching)
-                    const Center(child: CircularProgressIndicator()),
-                  if (_foundInvoices.isNotEmpty)
-                    SizedBox(
-                      height: 150,
-                      child: ListView.builder(
-                        itemCount: _foundInvoices.length,
-                        itemBuilder: (context, index) {
-                          final invoice = _foundInvoices[index];
-                          return Card(
-                            child: ListTile(
-                              title: Text(invoice.customerName ?? 'No Name'),
-                              subtitle: Text(
-                                'Last Visit:  ${DateFormat('dd-MM-yyyy').format(invoice.saleDate)}',
-                              ),
-                              onTap: () {
-                                setState(() {
-                                  _selectedInvoice = invoice;
-                                });
-                              },
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  if (_selectedInvoice != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 16.0),
-                      child: _buildInvoiceDetails(_selectedInvoice!),
-                    ),
-                ],
+    return Scaffold(
+      body: _isLoading
+          ? const _LoadingWidget()
+          : CustomScrollView(
+              controller: _scrollController,
+              physics: const BouncingScrollPhysics(
+                parent: AlwaysScrollableScrollPhysics(),
               ),
-            ),
-          ),
-
-          const SizedBox(height: 20),
-
-          // --- Second Card: All Customers List Below ---
-          if (_allCustomers.isNotEmpty)
-            Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('All Customers', style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      height: 150,
-                      child: ListView.builder(
-                        itemCount: _allCustomers.length,
-                        itemBuilder: (context, index) {
-                          final invoice = _allCustomers[index];
-                          return ListTile(
-                            title: Text(invoice.customerName ?? 'No Name'),
-                            subtitle: Text(invoice.customerContact ?? ''),
-                            trailing: Text('Last: ${DateFormat('dd-MM-yyyy').format(invoice.saleDate)}'),
-                            onTap: () {
-                              setState(() {
-                                _selectedInvoice = invoice;
-                              });
-                            },
-                          );
+              slivers: [
+                // Search Card
+                SliverPadding(
+                  padding: const EdgeInsets.all(16.0),
+                  sliver: SliverToBoxAdapter(
+                    child: _buildSearchCard(),
+                  ),
+                ),
+                
+                // Loading indicator
+                if (_isSearching)
+                  const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  ),
+                
+                // Search Results as Sliver
+                if (_foundInvoices.isNotEmpty)
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    sliver: SliverToBoxAdapter(
+                      child: _buildSearchResultsHeader(),
+                    ),
+                  ),
+                
+                if (_foundInvoices.isNotEmpty)
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final invoice = _foundInvoices[index];
+                          return _buildCustomerListItem(invoice, isSearchResult: true);
                         },
+                        childCount: _foundInvoices.length,
                       ),
                     ),
-                  ],
+                  ),
+                
+                // Selected Invoice Details
+                if (_selectedInvoice != null)
+                  SliverPadding(
+                    padding: const EdgeInsets.all(16.0),
+                    sliver: SliverToBoxAdapter(
+                      child: _buildInvoiceDetailsCard(),
+                    ),
+                  ),
+                
+                // All Customers Header
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  sliver: SliverToBoxAdapter(
+                    child: _buildAllCustomersHeader(),
+                  ),
+                ),
+                
+                // All Customers List as Sliver
+                if (_allCustomers.isNotEmpty)
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final invoice = _allCustomers[index];
+                          return _buildCustomerListItem(invoice);
+                        },
+                        childCount: _allCustomers.length,
+                      ),
+                    ),
+                  )
+                else
+                  const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: _EmptyStateWidget(message: 'No customers found'),
+                    ),
+                  ),
+                
+                // Bottom padding
+                const SliverToBoxAdapter(
+                  child: SizedBox(height: 100),
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildSearchCard() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.search, color: Colors.blue.shade700, size: 28),
+                const SizedBox(width: 12),
+                Text(
+                  'Customer Lookup',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.blue.shade700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _customerNameController,
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                labelText: 'Search by name or contact',
+                hintText: 'Enter customer name or phone number',
+                prefixIcon: const Icon(Icons.person_search),
+                suffixIcon: _customerNameController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: _clearSearch,
+                      )
+                    : null,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.blue.shade600, width: 2),
                 ),
               ),
             ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchResultsHeader() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          children: [
+            Icon(Icons.search_rounded, color: Colors.blue.shade700),
+            const SizedBox(width: 8),
+            Text(
+              'Search Results (${_foundInvoices.length})',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: Colors.blue.shade700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAllCustomersHeader() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.group, color: Colors.purple.shade700, size: 24),
+                const SizedBox(width: 8),
+                Text(
+                  'All Customers (${_allCustomers.length})',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.purple.shade700,
+                  ),
+                ),
+              ],
+            ),
+            IconButton(
+              onPressed: _loadAllCustomers,
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refresh customers',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCustomerListItem(Invoice invoice, {bool isSearchResult = false}) {
+    final isSelected = _selectedInvoice?.invoiceId == invoice.invoiceId;
+    final color = isSearchResult ? Colors.blue : Colors.purple;
+    
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      elevation: isSelected ? 4 : 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: isSelected 
+            ? BorderSide(color: color.shade300, width: 2)
+            : BorderSide.none,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: isSelected ? color.shade50 : null,
+        ),
+        child: ListTile(
+          onTap: () => _selectInvoice(invoice),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          leading: Hero(
+            tag: 'customer_${invoice.invoiceId}',
+            child: CircleAvatar(
+              backgroundColor: color.shade100,
+              child: Text(
+                (invoice.customerName ?? 'U')[0].toUpperCase(),
+                style: TextStyle(
+                  color: color.shade700,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          title: Text(
+            invoice.customerName ?? 'Unknown Customer',
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              color: isSelected ? color.shade800 : null,
+            ),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (invoice.customerContact?.isNotEmpty ?? false)
+                Text(
+                  invoice.customerContact!,
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 13,
+                  ),
+                ),
+              const SizedBox(height: 2),
+              Text(
+                'Last visit: ${_dateFormatter.format(invoice.saleDate)}',
+                style: TextStyle(
+                  color: Colors.grey.shade500,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          trailing: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  _currencyFormatter.format(invoice.totalAmount),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green.shade700,
+                  ),
+                ),
+              ),
+              if (isSelected)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Icon(
+                    Icons.keyboard_arrow_down,
+                    color: color.shade600,
+                    size: 16,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInvoiceDetailsCard() {
+    if (_selectedInvoice == null) return const SizedBox.shrink();
+
+    return Card(
+      elevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.receipt_long, color: Colors.green.shade700, size: 28),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Customer Details: ${_selectedInvoice!.customerName ?? "Unknown"}',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            _buildInvoiceDetails(_selectedInvoice!),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildInvoiceDetails(Invoice invoice) {
-    final formatCurrency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Latest Details for ${invoice.customerName}:',
-            style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        _buildDetailRow('Date:', invoice.saleDate.toLocal().toString().split(' ')[0]),
-        _buildDetailRow('Contact:', invoice.customerContact ?? 'N/A'),
-        const Divider(height: 20),
-        Text('Prescription Details:', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildVisionDetail('Right Eye DV', invoice.rightEyeDV),
-            _buildVisionDetail('Right Eye NV', invoice.rightEyeNV),
+        // Basic Info Section
+        _buildSectionCard(
+          'Basic Information',
+          Icons.info_outline,
+          Colors.blue,
+          [
+            _buildInfoRow('Date', _dateFormatter.format(invoice.saleDate)),
+            _buildInfoRow('Contact', invoice.customerContact ?? 'N/A'),
+            _buildInfoRow('Invoice ID', invoice.invoiceId.substring(0, 8).toUpperCase()),
           ],
         ),
-        const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildVisionDetail('Left Eye DV', invoice.leftEyeDV),
-            _buildVisionDetail('Left Eye NV', invoice.leftEyeNV),
+        
+        const SizedBox(height: 16),
+        
+        // Prescription Section
+        _buildSectionCard(
+          'Prescription Details',
+          Icons.visibility,
+          Colors.orange,
+          [
+            Row(
+              children: [
+                Expanded(child: _buildVisionCard('Right Eye DV', invoice.rightEyeDV)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildVisionCard('Right Eye NV', invoice.rightEyeNV)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: _buildVisionCard('Left Eye DV', invoice.leftEyeDV)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildVisionCard('Left Eye NV', invoice.leftEyeNV)),
+              ],
+            ),
           ],
         ),
-        const Divider(height: 20),
-        Text('Purchased Items:', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        ...invoice.items.map((item) => Card(
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          child: ListTile(
-            title: Text('${item.productName} (${item.productType})'),
-            subtitle: Text(
-                'Qty: ${item.quantity} @ ${formatCurrency.format(item.unitSellingPrice)}'),
-            trailing: Text(formatCurrency.format(item.totalSellingPrice)),
-          ),
-        )),
-        const Divider(height: 20),
-        Text('Bill Summary:', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        _buildDetailRow('Subtotal:', formatCurrency.format(invoice.subtotal)),
-        _buildDetailRow('Discount:', formatCurrency.format(invoice.totalDiscountOnBill ?? 0)),
-        _buildDetailRow('Payment Method:', invoice.paymentMethod),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('Total Amount:',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            Text(formatCurrency.format(invoice.totalAmount),
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold, color: Colors.blue)),
+
+        const SizedBox(height: 16),
+
+        // Purchased Items Section
+        _buildSectionCard(
+          'Purchased Items (${invoice.items.length})',
+          Icons.shopping_bag,
+          Colors.green,
+          [
+            ...invoice.items.map((item) => Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.productName,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        Text(
+                          '${item.productType} • Qty: ${item.quantity}',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        _currencyFormatter.format(item.totalSellingPrice),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade700,
+                        ),
+                      ),
+                      Text(
+                        '@ ${_currencyFormatter.format(item.unitSellingPrice)}',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            )),
           ],
         ),
+
+        const SizedBox(height: 16),
+
+        // Bill Summary Section
+        _buildBillSummaryCard(invoice),
       ],
     );
   }
 
-  Widget _buildDetailRow(String title, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget _buildSectionCard(
+    String title,
+    IconData icon,
+    Color color,
+    List<Widget> children,
+  ) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-          Text(value),
+          Row(
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...children,
         ],
       ),
     );
   }
 
-  Widget _buildVisionDetail(String title, String? value) {
-    return Column(
-      children: [
-        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 4),
-        Text(value ?? 'N/A'),
-      ],
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(color: Colors.grey.shade700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVisionCard(String title, String? value) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w500,
+              fontSize: 12,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value ?? 'N/A',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade700,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillSummaryCard(Invoice invoice) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.blue.shade50, Colors.blue.shade100],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.receipt, color: Colors.blue.shade700, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'Bill Summary',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blue.shade700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildInfoRow('Subtotal', _currencyFormatter.format(invoice.subtotal)),
+          _buildInfoRow('Discount', _currencyFormatter.format(invoice.totalDiscountOnBill ?? 0)),
+          _buildInfoRow('Payment Method', invoice.paymentMethod),
+          const Divider(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Total Amount',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue.shade700,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade700,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _currencyFormatter.format(invoice.totalAmount),
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadingWidget extends StatelessWidget {
+  const _LoadingWidget();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('Loading customers...'),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyStateWidget extends StatelessWidget {
+  final String message;
+
+  const _EmptyStateWidget({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        children: [
+          Icon(
+            Icons.person_outline,
+            size: 64,
+            color: Colors.grey.shade400,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey.shade600,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:optibill/screens/login_screen.dart'; // To navigate on logout
+import 'package:optibill/screens/login_screen.dart';
 import 'package:optibill/screens/product_list_screen.dart';
 import 'package:optibill/screens/billing_screen.dart';
 import 'package:optibill/screens/reports_screen.dart';
 import 'package:optibill/screens/backup_restore_screen.dart';
-import 'package:optibill/screens/settings_screen.dart'; // Import the new settings screen
-import 'package:hive/hive.dart'; // Added for Hive
+import 'package:optibill/screens/settings_screen.dart';
+import 'package:hive/hive.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,52 +16,110 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  late PageController _pageController;
+  
+  // Use lazy initialization for widgets to improve memory efficiency
+  late final List<Widget> _pages;
 
-  // List of the widgets to display for each tab.
-  static const List<Widget> _widgetOptions = <Widget>[
-    BillingScreen(),
-    ProductListScreen(),
-    ReportsScreen(),
-    BackupRestoreScreen(),
-  ];
-
-  // List of titles corresponding to each tab.
-  static const List<String> _appBarTitles = <String>[
+  // Static configuration data
+  static const List<String> _appBarTitles = [
     'New Invoice',
     'Products',
     'Reports',
     'Backup & Restore',
   ];
 
-  // This function is called when a tab is tapped.
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
+  static const List<BottomNavigationBarItem> _bottomNavItems = [
+    BottomNavigationBarItem(
+      icon: Icon(Icons.receipt),
+      label: 'Billing',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.inventory),
+      label: 'Products',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.analytics),
+      label: 'Reports',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.cloud_upload),
+      label: 'Backup/Restore',
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: _selectedIndex);
+    
+    // Initialize pages lazily
+    _pages = const [
+      BillingScreen(),
+      ProductListScreen(),
+      ReportsScreen(),
+      BackupRestoreScreen(),
+    ];
   }
 
-  // --- Handles selection from the three-dot menu ---
-  void _handleMenuSelection(String value) async {
-    switch (value) {
-      case 'settings':
-      // --- Updated: Navigate to the SettingsScreen ---
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const SettingsScreen()),
-        );
-        break;
-      case 'logout':
-      // --- "Stay Logged In" logic added here ---
-      // Clear the login state from Hive so the user has to log in next time.
-        final authBox = Hive.box('auth');
-        await authBox.put('isLoggedIn', false);
-        // --- End of added logic ---
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
-        // Navigate to the LoginScreen and remove all previous routes.
+  void _onItemTapped(int index) {
+    if (_selectedIndex != index) {
+      setState(() {
+        _selectedIndex = index;
+      });
+      _pageController.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  void _onPageChanged(int index) {
+    if (_selectedIndex != index) {
+      setState(() {
+        _selectedIndex = index;
+      });
+    }
+  }
+
+  Future<void> _handleLogout() async {
+    try {
+      final authBox = Hive.box('auth');
+      await authBox.put('isLoggedIn', false);
+      
+      if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const LoginScreen()),
-              (Route<dynamic> route) => false,
+          (route) => false,
         );
+      }
+    } catch (e) {
+      // Handle error if needed
+      debugPrint('Logout error: $e');
+    }
+  }
+
+  void _navigateToSettings() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const SettingsScreen()),
+    );
+  }
+
+  void _handleMenuSelection(String value) {
+    switch (value) {
+      case 'settings':
+        _navigateToSettings();
+        break;
+      case 'logout':
+        _handleLogout();
         break;
     }
   }
@@ -69,71 +127,67 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(
-          // The title now dynamically updates based on the selected index.
-          title: Text(_appBarTitles[_selectedIndex]),
-          centerTitle: true,
-          // Set the AppBar color.
-          backgroundColor: Colors.blue[800],
-          // Add the three-dot menu.
-          actions: <Widget>[
-            PopupMenuButton<String>(
-              onSelected: _handleMenuSelection,
-              itemBuilder: (BuildContext context) {
-                return [
-                  const PopupMenuItem<String>(
-                    value: 'settings',
-                    child: Row(
-                      children: [
-                        Icon(Icons.settings, color: Colors.black54),
-                        SizedBox(width: 8),
-                        Text('Settings'),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem<String>(
-                    value: 'logout',
-                    child: Row(
-                      children: [
-                        Icon(Icons.logout, color: Colors.black54),
-                        SizedBox(width: 8),
-                        Text('Logout'),
-                      ],
-                    ),
-                  ),
-                ];
-              },
-            ),
-          ],
-        ),
-        body: Center(
-          child: _widgetOptions.elementAt(_selectedIndex),
-        ),
-        bottomNavigationBar: BottomNavigationBar(
-            items: const <BottomNavigationBarItem>[
-              BottomNavigationBarItem(
-                icon: Icon(Icons.receipt),
-                label: 'Billing',
+      appBar: AppBar(
+        title: Text(_appBarTitles[_selectedIndex]),
+        centerTitle: true,
+        backgroundColor: Colors.blue,
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: _handleMenuSelection,
+            itemBuilder: (context) => const [
+              PopupMenuItem<String>(
+                value: 'settings',
+                child: _MenuOption(
+                  icon: Icons.settings,
+                  text: 'Settings',
+                ),
               ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.inventory),
-                label: 'Products',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.analytics),
-                label: 'Reports',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.cloud_upload),
-                label: 'Backup/Restore',
+              PopupMenuItem<String>(
+                value: 'logout',
+                child: _MenuOption(
+                  icon: Icons.logout,
+                  text: 'Logout',
+                ),
               ),
             ],
-            currentIndex: _selectedIndex,
-            selectedItemColor: Colors.blue[800],
-            unselectedItemColor: Colors.grey,
-            onTap: _onItemTapped,
-            type: BottomNavigationBarType.fixed, // Ensures all labels are visible
-            ),
-        );
-    }
+          ),
+        ],
+      ),
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: _onPageChanged,
+        children: _pages,
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        items: _bottomNavItems,
+        currentIndex: _selectedIndex,
+        selectedItemColor: Colors.blue[800],
+        unselectedItemColor: Colors.grey,
+        onTap: _onItemTapped,
+        type: BottomNavigationBarType.fixed,
+      ),
+    );
+  }
+}
+
+// Extracted menu option widget for better reusability and performance
+class _MenuOption extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _MenuOption({
+    required this.icon,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: Colors.black54),
+        const SizedBox(width: 8),
+        Text(text),
+      ],
+    );
+  }
 }
