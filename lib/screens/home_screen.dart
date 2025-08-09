@@ -43,8 +43,8 @@ class _HomeScreenState extends State<HomeScreen> {
       label: 'Reports',
     ),
     BottomNavigationBarItem(
-      icon: Icon(Icons.cloud_upload),
-      label: 'Backup/Restore',
+      icon: Icon(Icons.archive),
+      label: 'Archive',
     ),
   ];
 

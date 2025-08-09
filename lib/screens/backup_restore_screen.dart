@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:optibill/services/google_drive_service.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:hive/hive.dart';
@@ -6,8 +9,8 @@ import 'package:intl/intl.dart';
 import 'package:optibill/models/invoice.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:async';
 
+/// Enhanced backup and restore screen with professional architecture
 class BackupRestoreScreen extends StatelessWidget {
   const BackupRestoreScreen({super.key});
 
@@ -17,12 +20,18 @@ class BackupRestoreScreen extends StatelessWidget {
       length: 2,
       child: Scaffold(
         appBar: AppBar(
-          toolbarHeight: 0,
-          title: const Text('Utilities'),
+          toolbarHeight: 0, // Inside your AppBar properties
           bottom: const TabBar(
+            indicatorWeight: 3,
             tabs: [
-              Tab(text: 'Customer Lookup', icon: Icon(Icons.search)),
-              Tab(text: 'Backup & Restore', icon: Icon(Icons.backup)),
+              Tab(
+                text: 'Customer Lookup',
+                icon: Icon(Icons.search_outlined),
+              ),
+              Tab(
+                text: 'Backup & Restore',
+                icon: Icon(Icons.backup_outlined),
+              ),
             ],
           ),
         ),
@@ -37,7 +46,7 @@ class BackupRestoreScreen extends StatelessWidget {
   }
 }
 
-// --- BackupRestoreTab ---
+/// Enhanced backup and restore tab with professional features
 class BackupRestoreTab extends StatefulWidget {
   const BackupRestoreTab({super.key});
 
@@ -45,415 +54,976 @@ class BackupRestoreTab extends StatefulWidget {
   State<BackupRestoreTab> createState() => _BackupRestoreTabState();
 }
 
-class _BackupRestoreTabState extends State<BackupRestoreTab> {
+class _BackupRestoreTabState extends State<BackupRestoreTab>
+    with AutomaticKeepAliveClientMixin {
+  
+  // Constants
+  static const String _lastAutoBackupTimeKey = 'lastAutoBackupTime';
+  static const String _autoBackupEnabledKey = 'autoBackupEnabled';
+  static const Duration _autoBackupInterval = Duration(days: 7);
+  static const Duration _connectionTimeout = Duration(seconds: 30);
+  
+  // Services
   final GoogleDriveService _googleDriveService = GoogleDriveService();
+  final Connectivity _connectivity = Connectivity();
+  
+  // State management
   bool _isSigningIn = false;
   bool _isBackingUp = false;
   bool _isRestoring = false;
+  bool _isAutoBackingUp = false;
   List<drive.File> _backupFiles = [];
+  bool _autoBackupEnabled = true;
+  
+  // Auto backup management
   Timer? _autoBackupTimer;
+  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
   DateTime? _lastAutoBackupTime;
+  
+  // UI state
+  bool _isInitializing = true;
+  String? _lastError;
 
-  static const String _lastAutoBackupTimeKey = 'lastAutoBackupTime';
-  static const Duration _autoBackupInterval = Duration(days: 7);
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    _checkSignInStatus();
-    _loadLastAutoBackupTime();
-    _startAutoBackupTimer();
+    _initializeBackupSystem();
   }
 
   @override
   void dispose() {
-    _autoBackupTimer?.cancel();
+    _cleanupResources();
     super.dispose();
   }
 
-  Future<void> _loadLastAutoBackupTime() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastBackupMillis = prefs.getInt(_lastAutoBackupTimeKey);
-    if (lastBackupMillis != null) {
-      _lastAutoBackupTime = DateTime.fromMillisecondsSinceEpoch(lastBackupMillis);
-    }
-    if (mounted) {
-      setState(() {}); // Update UI to show last backup time
-    }
-  }
-
-  Future<void> _saveLastAutoBackupTime() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_lastAutoBackupTimeKey, DateTime.now().millisecondsSinceEpoch);
-    _lastAutoBackupTime = DateTime.now();
-    if (mounted) {
-      setState(() {}); // Update UI
-    }
-  }
-
-  void _startAutoBackupTimer() {
-    // Calculate time until next backup
-    Duration timeUntilNextBackup = _autoBackupInterval;
-    if (_lastAutoBackupTime != null) {
-      final timeSinceLastBackup = DateTime.now().difference(_lastAutoBackupTime!);
-      if (timeSinceLastBackup < _autoBackupInterval) {
-        timeUntilNextBackup = _autoBackupInterval - timeSinceLastBackup;
-      } else {
-        // If more than 2 weeks have passed, schedule backup immediately
-        timeUntilNextBackup = Duration.zero;
+  /// Initialize the entire backup system
+  Future<void> _initializeBackupSystem() async {
+    try {
+      await _loadSettings();
+      await _checkSignInStatus();
+      _setupConnectivityListener();
+      _setupAutoBackupTimer();
+    } catch (error) {
+      _handleError('Failed to initialize backup system', error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+        });
       }
     }
+  }
 
-    _autoBackupTimer = Timer.periodic(timeUntilNextBackup, (timer) {
+  /// Clean up all resources and subscriptions
+  void _cleanupResources() {
+    _autoBackupTimer?.cancel();
+    _connectivitySubscription?.cancel();
+  }
+
+  /// Load user settings from SharedPreferences
+  Future<void> _loadSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Load last backup time
+      final lastBackupMillis = prefs.getInt(_lastAutoBackupTimeKey);
+      if (lastBackupMillis != null) {
+        _lastAutoBackupTime = DateTime.fromMillisecondsSinceEpoch(lastBackupMillis);
+      }
+      
+      // Load auto backup preference
+      _autoBackupEnabled = prefs.getBool(_autoBackupEnabledKey) ?? true;
+      
+      if (mounted) setState(() {});
+    } catch (error) {
+      debugPrint('Error loading settings: $error');
+    }
+  }
+
+  /// Save settings to SharedPreferences
+  Future<void> _saveSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      if (_lastAutoBackupTime != null) {
+        await prefs.setInt(_lastAutoBackupTimeKey, _lastAutoBackupTime!.millisecondsSinceEpoch);
+      }
+      
+      await prefs.setBool(_autoBackupEnabledKey, _autoBackupEnabled);
+    } catch (error) {
+      debugPrint('Error saving settings: $error');
+    }
+  }
+
+  /// Check existing sign-in status
+  Future<void> _checkSignInStatus() async {
+    if (!mounted) return;
+    
+    setState(() => _isSigningIn = true);
+    
+    try {
+      final isSignedIn = await _googleDriveService.signInSilently()
+          .timeout(_connectionTimeout);
+      
+      if (isSignedIn) {
+        await _listBackupFiles();
+        debugPrint('User already signed in to Google Drive');
+      }
+    } catch (error) {
+      _handleError('Failed to check sign-in status', error, showSnackBar: false);
+    } finally {
+      if (mounted) {
+        setState(() => _isSigningIn = false);
+      }
+    }
+  }
+
+  /// Setup connectivity listener for network changes
+  void _setupConnectivityListener() {
+    _connectivitySubscription = _connectivity.onConnectivityChanged.listen(
+      (ConnectivityResult result) {
+        if (result != ConnectivityResult.none && 
+            _googleDriveService.isSignedIn && 
+            _shouldPerformAutoBackup()) {
+          _performAutoBackup();
+        }
+      },
+    );
+  }
+
+  /// Setup auto backup timer
+  void _setupAutoBackupTimer() {
+    if (!_autoBackupEnabled) return;
+    
+    final timeUntilNextBackup = _calculateTimeUntilNextBackup();
+    
+    _autoBackupTimer = Timer(timeUntilNextBackup, () {
       _performAutoBackup();
-      // After the first backup, the timer will tick every 2 weeks
-      _autoBackupTimer?.cancel(); // Cancel the current timer
-      _autoBackupTimer = Timer.periodic(_autoBackupInterval, (timer) {
+      // Setup periodic timer after first backup
+      _autoBackupTimer?.cancel();
+      _autoBackupTimer = Timer.periodic(_autoBackupInterval, (_) {
         _performAutoBackup();
       });
     });
   }
 
+  /// Calculate time until next backup is due
+  Duration _calculateTimeUntilNextBackup() {
+    if (_lastAutoBackupTime == null) {
+      return Duration.zero; // Backup immediately if never backed up
+    }
+    
+    final timeSinceLastBackup = DateTime.now().difference(_lastAutoBackupTime!);
+    if (timeSinceLastBackup >= _autoBackupInterval) {
+      return Duration.zero; // Backup immediately if overdue
+    }
+    
+    return _autoBackupInterval - timeSinceLastBackup;
+  }
+
+  /// Check if auto backup should be performed
+  bool _shouldPerformAutoBackup() {
+    if (!_autoBackupEnabled || !_googleDriveService.isSignedIn) {
+      return false;
+    }
+    
+    if (_lastAutoBackupTime == null) {
+      return true; // Never backed up
+    }
+    
+    final timeSinceLastBackup = DateTime.now().difference(_lastAutoBackupTime!);
+    return timeSinceLastBackup >= _autoBackupInterval;
+  }
+
+  /// Perform automatic backup
   Future<void> _performAutoBackup() async {
-    // Only perform auto-backup if signed in and connected to the internet
-    if (_googleDriveService.isSignedIn) {
-      final connectivityResult = await (Connectivity().checkConnectivity());
-      if (connectivityResult != ConnectivityResult.none) {
-        print('Attempting auto-backup...');
-        try {
-          await _googleDriveService.backupData();
-          print('Auto-backup successful!');
-          _saveLastAutoBackupTime(); // Save timestamp of successful auto-backup
-        } catch (e) {
-          print('Auto-backup failed: $e');
-          // Handle backup failure (e.g., show a silent notification)
-        }
-      } else {
-        print('No internet connection for auto-backup.');
-      }
-    } else {
-      print('Not signed in to Google Drive for auto-backup.');
-    }
-  }
-
-  // FIXED: Properly check existing sign-in status
-  Future<void> _checkSignInStatus() async {
-    if (!mounted) return;
-    
-    setState(() {
-      _isSigningIn = true; // Show loading while checking
-    });
+    if (_isBackingUp || _isAutoBackingUp) return;
     
     try {
-      // Check if user is already signed in silently
-      bool isSignedIn = await _googleDriveService.signInSilently();
+      final connectivityResult = await _connectivity.checkConnectivity();
+      if (connectivityResult == ConnectivityResult.none) {
+        debugPrint('No internet connection for auto-backup');
+        return;
+      }
       
-      if (isSignedIn) {
-        // If signed in, load backup files automatically
-        await _listBackupFiles();
-        print('User already signed in to Google Drive');
-      } else {
-        print('User not signed in to Google Drive');
+      debugPrint('Performing auto-backup...');
+      setState(() => _isAutoBackingUp = true);
+      
+      await _googleDriveService.backupData().timeout(_connectionTimeout);
+      
+      _lastAutoBackupTime = DateTime.now();
+      await _saveSettings();
+      await _listBackupFiles();
+      
+      debugPrint('Auto-backup completed successfully');
+      
+      if (mounted) {
+        _showSuccessSnackBar('Auto-backup completed successfully');
       }
-    } catch (e) {
-      print('Error checking sign-in status: $e');
+      
+    } catch (error) {
+      debugPrint('Auto-backup failed: $error');
+      _handleError('Auto-backup failed', error, showSnackBar: false);
     } finally {
       if (mounted) {
-        setState(() {
-          _isSigningIn = false;
-        });
+        setState(() => _isAutoBackingUp = false);
       }
     }
   }
 
+  /// Handle Google sign in
   Future<void> _handleSignIn() async {
-    if (!mounted) return;
+    if (_isSigningIn) return;
     
-    setState(() {
-      _isSigningIn = true;
-    });
+    setState(() => _isSigningIn = true);
+    
     try {
-      bool success = await _googleDriveService.signIn();
+      final success = await _googleDriveService.signIn()
+          .timeout(_connectionTimeout);
+      
       if (success) {
+        await _listBackupFiles();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Signed in to Google Drive!')),
-          );
+          _showSuccessSnackBar('Successfully signed in to Google Drive');
         }
-        await _listBackupFiles(); // Load backup files after successful sign-in
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Google Sign-In cancelled or failed.')),
-          );
+          _showErrorSnackBar('Google Sign-In cancelled or failed');
         }
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error during sign-in: $e')),
-        );
-      }
+    } catch (error) {
+      _handleError('Sign-in failed', error);
     } finally {
       if (mounted) {
-        setState(() {
-          _isSigningIn = false;
-        });
+        setState(() => _isSigningIn = false);
       }
     }
   }
 
+  /// Handle Google sign out
   Future<void> _handleSignOut() async {
-    await _googleDriveService.signOut();
-    if (mounted) {
+    try {
+      await _googleDriveService.signOut();
+      
       setState(() {
         _backupFiles.clear();
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Signed out from Google Drive.')),
-      );
+      
+      if (mounted) {
+        _showInfoSnackBar('Signed out from Google Drive');
+      }
+    } catch (error) {
+      _handleError('Sign-out failed', error);
     }
   }
 
-  Future<void> _handleBackup() async {
-    if (!mounted) return;
+  /// Handle manual backup
+  Future<void> _handleManualBackup() async {
+    if (_isBackingUp) return;
     
-    setState(() {
-      _isBackingUp = true;
-    });
     try {
-      await _googleDriveService.backupData();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Data backed up successfully!')),
-        );
+      final connectivityResult = await _connectivity.checkConnectivity();
+      if (connectivityResult == ConnectivityResult.none) {
+        throw Exception('No internet connection available');
       }
-      await _listBackupFiles(); // Refresh backup files list
-      _saveLastAutoBackupTime(); // Also save timestamp for manual backups
-    } catch (e) {
+      
+      setState(() => _isBackingUp = true);
+      
+      await _googleDriveService.backupData().timeout(_connectionTimeout);
+      
+      _lastAutoBackupTime = DateTime.now();
+      await _saveSettings();
+      await _listBackupFiles();
+      
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Backup failed: $e')),
-        );
+        _showSuccessSnackBar('Data backed up successfully');
       }
+      
+    } catch (error) {
+      _handleError('Backup failed', error);
     } finally {
       if (mounted) {
-        setState(() {
-          _isBackingUp = false;
-        });
+        setState(() => _isBackingUp = false);
       }
     }
   }
 
+  /// Load available backup files
   Future<void> _listBackupFiles() async {
-    if (!_googleDriveService.isSignedIn) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please sign in to list backup files.')),
-        );
-      }
-      return;
-    }
+    if (!_googleDriveService.isSignedIn) return;
+    
     try {
-      final files = await _googleDriveService.listBackupFiles();
+      final files = await _googleDriveService.listBackupFiles()
+          .timeout(_connectionTimeout);
+      
       if (mounted) {
         setState(() {
           _backupFiles = files;
         });
-        if (files.isEmpty) {
-          print('No backup files found.'); // Changed to print instead of snackbar for silent loading
-        }
       }
-    } catch (e) {
+    } catch (error) {
+      _handleError('Failed to load backup files', error, showSnackBar: false);
+    }
+  }
+
+  /// Handle data restoration
+  Future<void> _handleRestore(drive.File file) async {
+    final confirmed = await _showRestoreConfirmation(file.name ?? 'Unknown File');
+    if (!confirmed) return;
+    
+    setState(() => _isRestoring = true);
+    
+    try {
+      await _googleDriveService.restoreData(file.id!)
+          .timeout(_connectionTimeout);
+      
+      await _listBackupFiles();
+      
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error listing backup files: $e')),
-        );
+        _showSuccessSnackBar('Data restored successfully');
+      }
+    } catch (error) {
+      _handleError('Restore failed', error);
+    } finally {
+      if (mounted) {
+        setState(() => _isRestoring = false);
       }
     }
   }
 
-  Future<void> _handleRestore(drive.File file) async {
-    if (!mounted) return;
-    
-    showDialog(
+  /// Show restore confirmation dialog
+  Future<bool> _showRestoreConfirmation(String fileName) async {
+    final result = await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) {
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
-          title: const Text('Confirm Restore'),
-          content: Text('Are you sure you want to restore data from "${file.name}"? This will overwrite all existing local data.'),
-          actions: <Widget>[
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('Confirm Restore'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This action will permanently overwrite all your current data with the backup data.',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Restoring from:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(fileName),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                '⚠️ This action cannot be undone. Make sure you have a recent backup of your current data.',
+                style: TextStyle(
+                  color: Colors.red,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+          actions: [
             TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
               child: const Text('Cancel'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
             ),
-            TextButton(
-              child: const Text('Restore', style: TextStyle(color: Colors.red)),
-              onPressed: () async {
-                Navigator.of(context).pop();
-                if (mounted) {
-                  setState(() {
-                    _isRestoring = true;
-                  });
-                }
-                try {
-                  await _googleDriveService.restoreData(file.id!);
-                  await _listBackupFiles();
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Data restored successfully!')),
-                    );
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Restore failed: $e')),
-                    );
-                  }
-                } finally {
-                  if (mounted) {
-                    setState(() {
-                      _isRestoring = false;
-                    });
-                  }
-                }
-              },
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Restore Data'),
             ),
           ],
         );
       },
     );
+    
+    return result ?? false;
   }
 
+  /// Toggle auto backup setting
+  void _toggleAutoBackup(bool enabled) {
+    setState(() {
+      _autoBackupEnabled = enabled;
+    });
+    
+    _saveSettings();
+    
+    if (enabled) {
+      _setupAutoBackupTimer();
+    } else {
+      _autoBackupTimer?.cancel();
+    }
+    
+    _showInfoSnackBar(
+      enabled ? 'Auto-backup enabled' : 'Auto-backup disabled',
+    );
+  }
+
+  /// Handle errors with consistent messaging
+  void _handleError(String message, dynamic error, {bool showSnackBar = true}) {
+    debugPrint('$message: $error');
+    
+    setState(() {
+      _lastError = message;
+    });
+    
+    if (showSnackBar && mounted) {
+      final errorMessage = _getUserFriendlyErrorMessage(error);
+      _showErrorSnackBar('$message: $errorMessage');
+    }
+  }
+
+  /// Convert technical errors to user-friendly messages
+  String _getUserFriendlyErrorMessage(dynamic error) {
+    final errorString = error.toString().toLowerCase();
+    
+    if (errorString.contains('network') || errorString.contains('connection')) {
+      return 'Please check your internet connection';
+    } else if (errorString.contains('timeout')) {
+      return 'Request timed out. Please try again';
+    } else if (errorString.contains('permission') || errorString.contains('access')) {
+      return 'Permission denied. Please sign in again';
+    } else if (errorString.contains('storage') || errorString.contains('quota')) {
+      return 'Not enough storage space available';
+    } else {
+      return 'An unexpected error occurred';
+    }
+  }
+
+  /// Show success snackbar
+  void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Text(message),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Show error snackbar
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'RETRY',
+          textColor: Colors.white,
+          onPressed: () {
+            if (_googleDriveService.isSignedIn) {
+              _listBackupFiles();
+            } else {
+              _handleSignIn();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Show info snackbar
+  void _showInfoSnackBar(String message) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Format file size for display
+  String _formatFileSize(int? bytes) {
+    if (bytes == null) return 'Unknown size';
+    
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  /// Get backup button text based on state
+  String _getBackupButtonText() {
+    if (_isBackingUp) return 'Backing Up...';
+    if (_isAutoBackingUp) return 'Auto-Backup in Progress...';
+    return 'Backup Data to Google Drive';
+  }
+
+  /// Build the main UI
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: ListView(
-        children: [
-          Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  Text(
-                    _googleDriveService.isSignedIn ? 'Google Drive Connected' : 'Connect to Google Drive',
-                    style: Theme.of(context).textTheme.headlineSmall,
+    super.build(context);
+    
+    if (_isInitializing) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Initializing backup system...'),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        if (_googleDriveService.isSignedIn) {
+          await _listBackupFiles();
+        }
+      },
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildAccountSection(),
+            const SizedBox(height: 24),
+            _buildBackupSection(),
+            const SizedBox(height: 24),
+            _buildSettingsSection(),
+            const SizedBox(height: 24),
+            _buildBackupFilesSection(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Build account management section
+  Widget _buildAccountSection() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _googleDriveService.isSignedIn 
+                        ? Colors.green.shade50 
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(height: 16),
-                  if (!_googleDriveService.isSignedIn)
-                    ElevatedButton.icon(
-                      onPressed: _isSigningIn ? null : _handleSignIn,
-                      icon: _isSigningIn ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.login),
-                      label: Text(_isSigningIn ? 'Signing In...' : 'Sign In with Google'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        textStyle: const TextStyle(fontSize: 18),
+                  child: Icon(
+                    _googleDriveService.isSignedIn 
+                        ? Icons.cloud_done 
+                        : Icons.cloud_off,
+                    color: _googleDriveService.isSignedIn 
+                        ? Colors.green 
+                        : Colors.grey,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _googleDriveService.isSignedIn 
+                            ? 'Google Drive Connected' 
+                            : 'Connect to Google Drive',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    )
-                  else
-                    Column(
-                      children: [
-                        Text('Signed in as: ${_googleDriveService.currentUser?.displayName ?? 'N/A'}'),
-                        const SizedBox(height: 10),
-                        ElevatedButton.icon(
-                          onPressed: _handleSignOut,
-                          icon: const Icon(Icons.logout),
-                          label: const Text('Sign Out'),
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 15),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-                            backgroundColor: Colors.red,
-                            foregroundColor: Colors.white,
-                            textStyle: const TextStyle(fontSize: 18),
+                      if (_googleDriveService.isSignedIn) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Signed in as: ${_googleDriveService.currentUser?.displayName ?? 'N/A'}',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Colors.grey.shade600,
                           ),
                         ),
                       ],
-                    ),
-                ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            if (!_googleDriveService.isSignedIn)
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isSigningIn ? null : _handleSignIn,
+                  icon: _isSigningIn 
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.login),
+                  label: Text(
+                    _isSigningIn ? 'Signing In...' : 'Sign In with Google',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _handleSignOut,
+                  icon: const Icon(Icons.logout),
+                  label: const Text('Sign Out'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    side: BorderSide(color: Colors.red.shade300),
+                    foregroundColor: Colors.red,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Build backup operations section
+  Widget _buildBackupSection() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Backup Operations',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
               ),
             ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            _lastAutoBackupTime == null
-                ? 'Last auto-backup: Never'
-                : 'Last auto-backup: ${DateFormat('dd-MM-yyyy HH:mm').format(_lastAutoBackupTime!)}',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: _googleDriveService.isSignedIn && !_isBackingUp ? _handleBackup : null,
-            icon: _isBackingUp ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.cloud_upload),
-            label: Text(_isBackingUp ? 'Backing Up...' : 'Backup Data to Google Drive'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-              textStyle: const TextStyle(fontSize: 18),
-            ),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: _googleDriveService.isSignedIn && !_isRestoring ? _listBackupFiles : null,
-            icon: _isRestoring ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.cloud_download),
-            label: Text(_isRestoring ? 'Restoring...' : 'Restore Data from Google Drive'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.white,
-              textStyle: const TextStyle(fontSize: 18),
-            ),
-          ),
-          const SizedBox(height: 24),
-          if (_backupFiles.isNotEmpty && _googleDriveService.isSignedIn)
-            Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(height: 16),
+            if (_lastAutoBackupTime != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
                   children: [
-                    Text('Available Backups:', style: Theme.of(context).textTheme.titleLarge),
-                    const SizedBox(height: 10),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _backupFiles.length,
-                      itemBuilder: (context, index) {
-                        final file = _backupFiles[index];
-                        return ListTile(
-                          title: Text(file.name ?? 'Unknown File'),
-                          subtitle: Text(
-                              'Backup Date: ${file.createdTime != null ? DateFormat('dd-MM-yyyy HH:mm').format(file.createdTime!) : 'N/A'}'),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.restore, color: Colors.blue),
-                            onPressed: () => _handleRestore(file),
-                          ),
-                        );
-                      },
+                    Icon(Icons.schedule, color: Colors.blue.shade700, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Last backup: ${DateFormat('MMM dd, yyyy \'at\' HH:mm').format(_lastAutoBackupTime!)}',
+                        style: TextStyle(
+                          color: Colors.blue.shade700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(height: 16),
+            ],
+            Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _googleDriveService.isSignedIn && 
+                              !_isBackingUp && !_isAutoBackingUp 
+                        ? _handleManualBackup 
+                        : null,
+                    icon: (_isBackingUp || _isAutoBackingUp)
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cloud_upload),
+                    label: Text(_getBackupButtonText()),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _googleDriveService.isSignedIn && 
+                              !_isRestoring
+                        ? _listBackupFiles 
+                        : null,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh Backup List'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ],
             ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Build settings section
+  Widget _buildSettingsSection() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Settings',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Auto Backup'),
+              subtitle: Text(
+                _autoBackupEnabled 
+                    ? 'Automatically backup data every 7 days'
+                    : 'Manual backup only',
+              ),
+              value: _autoBackupEnabled,
+              onChanged: _toggleAutoBackup,
+              secondary: Icon(
+                _autoBackupEnabled ? Icons.backup : Icons.backup_outlined,
+                color: _autoBackupEnabled ? Colors.green : Colors.grey,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Build backup files section
+  Widget _buildBackupFilesSection() {
+    if (!_googleDriveService.isSignedIn) {
+      return const SizedBox.shrink();
+    }
+    
+    if (_backupFiles.isEmpty) {
+      return Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(40.0),
+          child: Column(
+            children: [
+              Icon(
+                Icons.backup_outlined,
+                size: 64,
+                color: Colors.grey.shade400,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No backup files found',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Create your first backup to get started',
+                style: TextStyle(
+                  color: Colors.grey.shade500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Available Backups (${_backupFiles.length})',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                IconButton(
+                  onPressed: _listBackupFiles,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh backup list',
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _backupFiles.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final file = _backupFiles[index];
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.backup,
+                        color: Colors.blue.shade700,
+                        size: 24,
+                      ),
+                    ),
+                    title: Text(
+                      file.name ?? 'Unknown File',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (file.createdTime != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Created: ${DateFormat('MMM dd, yyyy \'at\' HH:mm').format(file.createdTime!)}',
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                        if (file.size != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Size: ${_formatFileSize(int.parse(file.size!))}',
+                            style: TextStyle(
+                              color: Colors.grey.shade500,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    trailing: IconButton(
+                      onPressed: _isRestoring ? null : () => _handleRestore(file),
+                      icon: _isRestoring
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.restore),
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.orange.shade50,
+                        foregroundColor: Colors.orange.shade700,
+                      ),
+                      tooltip: 'Restore from this backup',
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-
+/// Customer lookup tab with enhanced search functionality
 class CustomerLookupTab extends StatefulWidget {
   const CustomerLookupTab({super.key});
 
@@ -657,7 +1227,7 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
                     ),
                   ),
                 
-                // Search Results as Sliver
+                // Search Results
                 if (_foundInvoices.isNotEmpty)
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -697,7 +1267,7 @@ class _CustomerLookupTabState extends State<CustomerLookupTab> {
                   ),
                 ),
                 
-                // All Customers List as Sliver
+                // All Customers List
                 if (_allCustomers.isNotEmpty)
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 16.0),
